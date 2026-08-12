@@ -1,0 +1,2 @@
+nvidia-cutlass-dsl==4.7.0
+pytest>=8

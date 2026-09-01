@@ -147,7 +147,10 @@ def _summarize_position(times_ms: Sequence[float]) -> dict[str, float | int]:
 
 
 def summarize_paired_two_order_cycles(
-    ts_times_ms: Sequence[float], reference_times_ms: Sequence[float]
+    ts_times_ms: Sequence[float],
+    reference_times_ms: Sequence[float],
+    *,
+    reference_label: str = _REFERENCE_BACKEND,
 ) -> dict[str, Any]:
     """Summarize an order-balanced total ratio and per-cycle diagnostics.
 
@@ -160,6 +163,8 @@ def summarize_paired_two_order_cycles(
     percentiles remain descriptive diagnostics only.
     """
 
+    if not reference_label or reference_label == _TS_BACKEND:
+        raise ValueError("reference label must identify a distinct backend")
     sample_count = len(ts_times_ms)
     if sample_count != len(reference_times_ms):
         raise ValueError("paired timing requires equal TS and reference sample counts")
@@ -192,24 +197,26 @@ def summarize_paired_two_order_cycles(
             "first": _summarize_position(ts_samples[0::2]),
             "second": _summarize_position(ts_samples[1::2]),
         },
-        _REFERENCE_BACKEND: {
+        reference_label: {
             "first": _summarize_position(reference_samples[1::2]),
             "second": _summarize_position(reference_samples[0::2]),
         },
     }
     return {
         "method": "alternating-order-balanced-total-duration-ratio",
-        "gate_formula": ("(sum(attention_ts_ms) / sum(trtllm_gen_ms) - 1) * 100"),
+        "gate_formula": (
+            f"(sum(attention_ts_ms) / sum({reference_label}_ms) - 1) * 100"
+        ),
         "sample_count_per_backend": sample_count,
         "cycle_count": len(cycle_gaps_percent),
         "gap_percent_total_duration_ratio": total_duration_gap_percent,
         "backend_total_duration_ms": {
             _TS_BACKEND: ts_total_ms,
-            _REFERENCE_BACKEND: reference_total_ms,
+            reference_label: reference_total_ms,
         },
         "backend_arithmetic_mean_us": {
             _TS_BACKEND: float(statistics.fmean(ts_samples)) * 1000.0,
-            _REFERENCE_BACKEND: float(statistics.fmean(reference_samples)) * 1000.0,
+            reference_label: float(statistics.fmean(reference_samples)) * 1000.0,
         },
         "position_summaries": position_summaries,
         "cycle_gap_percent_median": float(statistics.median(cycle_gaps_percent)),
@@ -218,7 +225,7 @@ def summarize_paired_two_order_cycles(
         "cycle_gap_percent_max": max(cycle_gaps_percent),
         "raw_samples_ms": {
             _TS_BACKEND: ts_samples,
-            _REFERENCE_BACKEND: reference_samples,
+            reference_label: reference_samples,
         },
     }
 
@@ -260,12 +267,15 @@ def time_backend(
     return summary
 
 
-def paired_backend_order(sample_index: int) -> tuple[str, str]:
+def paired_backend_order(
+    sample_index: int,
+    reference_label: str = _REFERENCE_BACKEND,
+) -> tuple[str, str]:
     """Alternate replay order so neither backend always runs first."""
 
     if sample_index % 2 == 0:
-        return (_TS_BACKEND, _REFERENCE_BACKEND)
-    return (_REFERENCE_BACKEND, _TS_BACKEND)
+        return (_TS_BACKEND, reference_label)
+    return (reference_label, _TS_BACKEND)
 
 
 def capture_repeated_graph(
@@ -289,30 +299,29 @@ def time_paired_cuda_graphs(
     warmup_replays: int,
     sample_count: int,
     calls_per_graph: int,
+    reference_label: str = _REFERENCE_BACKEND,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """Time two equal-size hot-cache graphs with alternating replay order."""
 
     torch.cuda.synchronize()
     graphs = {
         _TS_BACKEND: capture_repeated_graph(run_ts, calls_per_graph, torch),
-        _REFERENCE_BACKEND: capture_repeated_graph(
-            run_reference, calls_per_graph, torch
-        ),
+        reference_label: capture_repeated_graph(run_reference, calls_per_graph, torch),
     }
     torch.cuda.synchronize()
 
     for warmup_index in range(warmup_replays):
-        for backend in paired_backend_order(warmup_index):
+        for backend in paired_backend_order(warmup_index, reference_label):
             graphs[backend].replay()
     torch.cuda.synchronize()
 
     samples_ms: dict[str, list[float]] = {
         _TS_BACKEND: [],
-        _REFERENCE_BACKEND: [],
+        reference_label: [],
     }
     for sample_index in range(sample_count):
         pending_events = {}
-        for backend in paired_backend_order(sample_index):
+        for backend in paired_backend_order(sample_index, reference_label):
             start = torch.cuda.Event(enable_timing=True)
             end = torch.cuda.Event(enable_timing=True)
             start.record()
@@ -333,11 +342,13 @@ def time_paired_cuda_graphs(
     }
     ts_summary = {**summarize_times(samples_ms[_TS_BACKEND], batch_size), **common}
     reference_summary = {
-        **summarize_times(samples_ms[_REFERENCE_BACKEND], batch_size),
+        **summarize_times(samples_ms[reference_label], batch_size),
         **common,
     }
     comparison_summary = summarize_paired_two_order_cycles(
-        samples_ms[_TS_BACKEND], samples_ms[_REFERENCE_BACKEND]
+        samples_ms[_TS_BACKEND],
+        samples_ms[reference_label],
+        reference_label=reference_label,
     )
     return ts_summary, reference_summary, comparison_summary
 
@@ -352,6 +363,7 @@ def time_paired_cold_l2_cuda_graphs(
     warmup_replays: int,
     sample_count: int,
     scrubber: ColdL2Scrubber,
+    reference_label: str = _REFERENCE_BACKEND,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """Time one-call graphs after an untimed same-stream 2x-L2 scrub.
 
@@ -365,7 +377,7 @@ def time_paired_cold_l2_cuda_graphs(
     torch.cuda.synchronize(device)
     graphs = {
         _TS_BACKEND: capture_repeated_graph(run_ts, 1, torch),
-        _REFERENCE_BACKEND: capture_repeated_graph(run_reference, 1, torch),
+        reference_label: capture_repeated_graph(run_reference, 1, torch),
     }
     torch.cuda.synchronize(device)
 
@@ -376,18 +388,18 @@ def time_paired_cold_l2_cuda_graphs(
         )
 
     for warmup_index in range(warmup_replays):
-        for backend in paired_backend_order(warmup_index):
+        for backend in paired_backend_order(warmup_index, reference_label):
             scrubber.enqueue()
             graphs[backend].replay()
     torch.cuda.synchronize(device)
 
     samples_ms: dict[str, list[float]] = {
         _TS_BACKEND: [],
-        _REFERENCE_BACKEND: [],
+        reference_label: [],
     }
     pending_events: list[tuple[str, Any, Any]] = []
     for sample_index in range(sample_count):
-        for backend in paired_backend_order(sample_index):
+        for backend in paired_backend_order(sample_index, reference_label):
             start = torch.cuda.Event(enable_timing=True)
             end = torch.cuda.Event(enable_timing=True)
             scrubber.enqueue()
@@ -416,11 +428,13 @@ def time_paired_cold_l2_cuda_graphs(
     }
     ts_summary = {**summarize_times(samples_ms[_TS_BACKEND], batch_size), **common}
     reference_summary = {
-        **summarize_times(samples_ms[_REFERENCE_BACKEND], batch_size),
+        **summarize_times(samples_ms[reference_label], batch_size),
         **common,
     }
     comparison_summary = summarize_paired_two_order_cycles(
-        samples_ms[_TS_BACKEND], samples_ms[_REFERENCE_BACKEND]
+        samples_ms[_TS_BACKEND],
+        samples_ms[reference_label],
+        reference_label=reference_label,
     )
     return ts_summary, reference_summary, comparison_summary
 

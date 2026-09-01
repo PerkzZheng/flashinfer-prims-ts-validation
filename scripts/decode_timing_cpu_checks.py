@@ -82,6 +82,22 @@ def test_paired_cycles_report_known_ten_percent_gap() -> None:
     assert summary["cycle_gap_percent_max"] == pytest.approx(10.0)
 
 
+def test_paired_cycles_support_a_named_public_reference() -> None:
+    summary = summarize_paired_two_order_cycles(
+        [1.0, 1.0],
+        [2.0, 2.0],
+        reference_label="cute_dsl",
+    )
+
+    assert summary["gate_formula"] == (
+        "(sum(attention_ts_ms) / sum(cute_dsl_ms) - 1) * 100"
+    )
+    assert set(summary["backend_total_duration_ms"]) == {
+        "attention_ts",
+        "cute_dsl",
+    }
+
+
 def test_bimodal_49_51_cycle_median_flip_does_not_flip_five_percent_gate() -> None:
     def samples(slow_cycle_count: int) -> tuple[list[float], list[float]]:
         # Each cycle has the same reference duration. Changing one cycle from

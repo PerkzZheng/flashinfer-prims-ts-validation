@@ -12,25 +12,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Compare public Attention-TS and TRTLLM-gen paged MLA decode.
+"""Compare public Attention-TS against an explicit public MLA reference.
 
-The default matrix contains exactly 100 SQ1 rows; ``--q-len 4`` runs the same
-100-row geometry as a distinct grouped-Q catalog::
+The default ``signoff`` suite contains exactly 100 SQ1 rows; ``--q-len 4``
+runs the same 100-row geometry as a distinct grouped-Q catalog::
 
     Hq(8,16,32,64,128) * B(1,4,8,64,128)
     * maxKV(2048,8192) * input(BF16,E4M3)
+
+The focused 22-row ``groups-tokens-heads-q`` suite compares PrimTS auto-dispatch
+with CuTe DSL and covers the public flat-query
+contract added for non-power-of-two query-head counts. It crosses heads
+12/24/48/96 with equivalent 48-row 1CTA and 96-row 2CTA geometries, exercises
+both split-reduction families, and verifies that otherwise identical B3/B4
+plans reuse one compiled topology. It intentionally records, but does not pin,
+the exact automatic policy selected for the performance rows.
 
 Every row is built once. Both public backends receive the same query/cache
 storage, two-dimensional page table, runtime sequence lengths, fused BMM
 scales, and backend-neutral FP32 reference. Output is BF16 and page size is
 32. Batches larger than one have deterministic unequal runtime lengths.
 
-Timing captures one public call in a separate CUDA graph for each backend,
-alternates replay order, and scrubs 2x L2 with non-compressible data immediately
-before every replay. Consecutive opposite-order samples form balanced two-order
-cycles. The regression gate is the ratio of total TS duration to total
-TRTLLM-gen duration over all complete cycles; per-cycle percentiles remain
-diagnostics. The scrub is outside the CUDA-event interval. Planning, reference
+Timing captures one public call in a separate CUDA graph for each backend and
+alternates replay order. The signoff suite scrubs 2x L2 with non-compressible
+data immediately before every replay; the focused feature suite uses the hot
+graph contract from the feature's public-backend campaign. Consecutive
+opposite-order samples form balanced two-order cycles. The regression gate is
+the ratio of total TS duration to total reference duration over all complete
+cycles; per-cycle percentiles remain diagnostics. Planning, reference
 construction, and first calls are reported but never timed. The default
 ``wrapper`` PrimTS interface preserves historical runs;
 ``--prims-ts-interface standalone`` selects the public caller-workspace API.
@@ -70,7 +79,7 @@ Pitfalls, regressions, limitations, and fallbacks
 -------------------------------------------------
 * ``qk_nope_head_dim`` is 512 for this absorbed MLA interface. It is distinct
   from the pre-absorption 128-wide query head used in the scale denominator.
-* TRTLLM-gen owns a separate, initially zeroed 128 MiB workspace and a
+* TRTLLM-gen signoff rows own a separate, initially zeroed 128 MiB workspace and a
   shape-sized counter buffer. The counter buffer must self-reset; it is never
   zeroed inside timing.
 * ``flashinfer.autotune(False)`` disables only Python cross-backend/bucket
@@ -81,8 +90,9 @@ Pitfalls, regressions, limitations, and fallbacks
 * This benchmark covers one fixed query length per invocation, bottom-right
   causal decode, latent/RoPE 512/64, page32, shared page indices, BF16/E4M3
   input, and BF16 output. Dense/causal equivalence applies only to SQ1.
-* No backend fallback is allowed: TS uses the selected public PrimTS interface
-  and the comparison call explicitly selects ``backend="trtllm-gen"``.
+* No backend fallback is allowed: TS uses the selected public PrimTS interface;
+  the signoff suite explicitly selects TRTLLM-gen and the focused feature suite
+  explicitly selects monolithic CuTe DSL.
 """
 
 from __future__ import annotations
@@ -117,11 +127,16 @@ from benchmarks.routines.attention_ts_benchmark import (  # noqa: E402, I001
     prepare_cold_l2_scrubber as _prepare_cold_l2_scrubber,
     sha256_file as _sha256_file,
     time_paired_cold_l2_cuda_graphs as _time_paired_cold_l2_cuda_graphs,
+    time_paired_cuda_graphs as _time_paired_cuda_graphs,
 )
 
 _HEADS = (8, 16, 32, 64, 128)
 _BATCH_SIZES = (1, 4, 8, 64, 128)
 _MAX_SEQ_LENS = (2048, 8192)
+_GROUPED_QUERY_HEADS = (12, 24, 48, 96)
+_GROUPED_QUERY_BATCH_SIZES = (3, 4)
+_GROUPED_QUERY_MAX_SEQ_LENS = (512, 1024, 32896)
+_SUITES = ("signoff", "groups-tokens-heads-q")
 _DTYPES = ("bf16", "fp8")
 _PAGE_SIZE = 32
 _Q_LEN = 1
@@ -130,6 +145,7 @@ _KV_LORA_RANK = 512
 _QK_ROPE_HEAD_DIM = 64
 _TRTLLM_WORKSPACE_BYTES = 128 * 1024 * 1024
 _TRTLLM_BACKEND = "trtllm-gen"
+_CUTE_DSL_BACKEND = "cute-dsl"
 _TRTLLM_ENABLE_PDL = False
 _TRTLLM_IS_VAR_SEQ = True
 _TRTLLM_USES_SHARED_PAGED_KV_IDX = True
@@ -137,13 +153,26 @@ _TRTLLM_SPARSE_MLA_TOP_K = 0
 _TRTLLM_PYTHON_AUTOTUNE = False
 _TRTLLM_INTERNAL_SHAPE_AUTO_SELECTOR = True
 _PRIMS_TS_INTERFACES = ("wrapper", "standalone")
+_EXPECTED_CUTLASS_DSL_VERSION = "4.7.0"
 _ORACLE_CUDA_MATMUL_FP32_PRECISION = "ieee"
 _REFERENCE_TOLERANCES = {
     "bf16": (1e-2, 5e-4, 2e-2),
     "fp8": (1e-1, 2e-3, 1e-1),
 }
-_SCHEMA_VERSION = 7
+_SCHEMA_VERSION = 8
 _PAIRED_GATE_METRIC = "paired_two_order_cycles.gap_percent_total_duration_ratio"
+
+
+def _reference_backend_for_suite(suite: str) -> str:
+    return _CUTE_DSL_BACKEND if suite == "groups-tokens-heads-q" else _TRTLLM_BACKEND
+
+
+def _reference_label(backend: str) -> str:
+    return backend.replace("-", "_")
+
+
+def _reference_display_name(backend: str) -> str:
+    return "TRTLLM-gen" if backend == _TRTLLM_BACKEND else "CuTe DSL"
 
 
 @dataclass(frozen=True)
@@ -157,6 +186,7 @@ class MLAPerformanceCaseSpec:
     dtype_name: str
     seed: int
     seq_len_q: int = _Q_LEN
+    compile_reuse_group: str | None = None
 
 
 def _stable_seed(case_id: str) -> int:
@@ -164,6 +194,10 @@ def _stable_seed(case_id: str) -> int:
         int.from_bytes(hashlib.sha256(case_id.encode()).digest()[:4], "little")
         & 0x7FFFFFFF
     )
+
+
+def _timing_cache_mode_for_suite(suite: str) -> str:
+    return "hot" if suite == "groups-tokens-heads-q" else "cold-l2"
 
 
 def _case_id(
@@ -207,12 +241,94 @@ def _full_matrix(seq_len_q: int = _Q_LEN) -> list[MLAPerformanceCaseSpec]:
     return specs
 
 
+def _groups_tokens_heads_q_matrix() -> list[MLAPerformanceCaseSpec]:
+    """Return focused public-auto rows without duplicating the signoff grid."""
+
+    shapes = (
+        # Hold B and K fixed across equal-row factorizations so the only
+        # structural change is the logical flat-query geometry.
+        # Equal 48-row factorizations exercise 1CTA without structural Q padding.
+        (4, 12, 4, 512, None),
+        (4, 24, 2, 512, None),
+        (4, 48, 1, 512, None),
+        # Equal 96-row factorizations exercise a partial M128 tile in 2CTA.
+        (4, 12, 8, 512, None),
+        (4, 24, 4, 512, None),
+        (4, 48, 2, 512, None),
+        (4, 96, 1, 512, None),
+        # Long-K anchors cover each family's split-reduction output path.
+        (4, 12, 1, 32896, None),
+        (4, 96, 1, 32896, None),
+    )
+    specs = []
+    for dtype_name in _DTYPES:
+        for batch_size, num_heads, seq_len_q, max_seq_len, reuse_group in shapes:
+            case_id = _case_id(
+                dtype_name,
+                batch_size,
+                num_heads,
+                max_seq_len,
+                seq_len_q,
+            )
+            specs.append(
+                MLAPerformanceCaseSpec(
+                    case_id=case_id,
+                    num_heads=num_heads,
+                    batch_size=batch_size,
+                    max_seq_len=max_seq_len,
+                    dtype_name=dtype_name,
+                    seed=_stable_seed(case_id),
+                    seq_len_q=seq_len_q,
+                    compile_reuse_group=reuse_group,
+                )
+            )
+
+    # Batch is a runtime value. Keep two same-topology BF16 pairs adjacent so
+    # the second plan can prove cache reuse without turning policy into a test.
+    for num_heads in (12, 96):
+        reuse_group = f"bf16-h{num_heads}-q1-kv1024"
+        for batch_size in (3, 4):
+            case_id = _case_id("bf16", batch_size, num_heads, 1024, 1)
+            specs.append(
+                MLAPerformanceCaseSpec(
+                    case_id=case_id,
+                    num_heads=num_heads,
+                    batch_size=batch_size,
+                    max_seq_len=1024,
+                    dtype_name="bf16",
+                    seed=_stable_seed(case_id),
+                    compile_reuse_group=reuse_group,
+                )
+            )
+
+    if len(specs) != 22 or len({spec.case_id for spec in specs}) != len(specs):
+        raise AssertionError("groups-tokens-heads-q must contain 22 unique rows")
+    return specs
+
+
+def _catalog(suite: str, seq_len_q: int) -> list[MLAPerformanceCaseSpec]:
+    if suite == "signoff":
+        return _full_matrix(seq_len_q)
+    if suite == "groups-tokens-heads-q":
+        return _groups_tokens_heads_q_matrix()
+    raise ValueError(f"unknown suite {suite!r}")
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Compare public Attention-TS and TRTLLM-gen MLA decode with "
+            "Compare public Attention-TS and an explicit MLA reference with "
             "paired cold-L2 one-call CUDA graphs."
         )
+    )
+    parser.add_argument(
+        "--suite",
+        choices=_SUITES,
+        default="signoff",
+        help=(
+            "Case catalog: the 100-row signoff product or the focused 22-row "
+            "non-power-of-two grouped-query regression suite."
+        ),
     )
     parser.add_argument(
         "--case",
@@ -222,7 +338,9 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Exact case ID to run; repeat to select multiple rows.",
     )
     parser.add_argument(
-        "--list-cases", action="store_true", help="List all 100 case IDs and exit."
+        "--list-cases",
+        action="store_true",
+        help="List selected suite case IDs and exit.",
     )
     parser.add_argument(
         "--q-len",
@@ -237,14 +355,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "--num-heads",
         action="append",
         type=int,
-        choices=_HEADS,
+        choices=tuple(sorted(set(_HEADS) | set(_GROUPED_QUERY_HEADS))),
         help="Query-head filter; repeat to select multiple values.",
     )
     parser.add_argument(
         "--batch-size",
         action="append",
         type=int,
-        choices=_BATCH_SIZES,
+        choices=tuple(sorted(set(_BATCH_SIZES) | set(_GROUPED_QUERY_BATCH_SIZES))),
         help="Batch-size filter; repeat to select multiple values.",
     )
     parser.add_argument(
@@ -253,7 +371,7 @@ def _build_parser() -> argparse.ArgumentParser:
         action="append",
         dest="max_seq_lens",
         type=int,
-        choices=_MAX_SEQ_LENS,
+        choices=tuple(sorted(set(_MAX_SEQ_LENS) | set(_GROUPED_QUERY_MAX_SEQ_LENS))),
         help="Maximum KV-length filter; repeat to select multiple values.",
     )
     parser.add_argument(
@@ -302,7 +420,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--gap-threshold",
         type=float,
         default=5.0,
-        help="Regression threshold relative to TRTLLM-gen (default: 5%%).",
+        help="Regression threshold relative to the suite reference (default: 5%%).",
     )
     parser.add_argument(
         "--fail-on-regression",
@@ -353,7 +471,10 @@ def _balanced_gap_percent(result: dict[str, Any]) -> float | None:
 
 
 def _raw_gap_percent(result: dict[str, Any]) -> float | None:
-    value = result.get("attention_ts_gap_percent_vs_trtllm_gen")
+    value = result.get(
+        "attention_ts_gap_percent_vs_reference",
+        result.get("attention_ts_gap_percent_vs_trtllm_gen"),
+    )
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     value = float(value)
@@ -389,7 +510,7 @@ def _performance_disposition(
 def _select_specs(
     parser: argparse.ArgumentParser, args
 ) -> list[MLAPerformanceCaseSpec]:
-    specs = _full_matrix(args.q_len)
+    specs = _catalog(args.suite, args.q_len)
     by_id = {spec.case_id: spec for spec in specs}
     if args.case_ids:
         unknown = sorted(set(args.case_ids) - set(by_id))
@@ -556,6 +677,7 @@ def _validate_trt_artifact_manifest(
 def _execution_semantics(
     prims_ts_interface: str = "wrapper",
     seq_len_q: int = _Q_LEN,
+    reference_backend: str = _TRTLLM_BACKEND,
 ) -> dict[str, Any]:
     """Machine-readable public comparison contract shared by rows/signatures."""
 
@@ -563,7 +685,7 @@ def _execution_semantics(
         raise ValueError(f"unsupported PrimTS interface {prims_ts_interface!r}")
     if seq_len_q <= 0:
         raise ValueError("seq_len_q must be positive")
-    return {
+    semantics = {
         "query_length": seq_len_q,
         "page_size": _PAGE_SIZE,
         "qk_nope_head_dim": _QK_NOPE_HEAD_DIM,
@@ -604,35 +726,58 @@ def _execution_semantics(
             prims_ts_interface == "standalone"
         ),
         "attention_ts_policy": "automatic-family-profile-split-persistence",
-        "trtllm_backend": _TRTLLM_BACKEND,
-        "trtllm_enable_pdl": _TRTLLM_ENABLE_PDL,
-        "trtllm_is_var_seq": _TRTLLM_IS_VAR_SEQ,
-        "trtllm_uses_shared_paged_kv_idx": _TRTLLM_USES_SHARED_PAGED_KV_IDX,
-        "trtllm_sparse_mla_top_k": _TRTLLM_SPARSE_MLA_TOP_K,
-        "trtllm_sinks": None,
-        "trtllm_skip_softmax_threshold_scale_factor": None,
-        "trtllm_return_lse": False,
-        "trtllm_cum_seq_lens_q": None,
-        "trtllm_python_cross_backend_bucket_autotune": _TRTLLM_PYTHON_AUTOTUNE,
-        "trtllm_tactic": -1,
-        "trtllm_internal_shape_auto_selector": (_TRTLLM_INTERNAL_SHAPE_AUTO_SELECTOR),
-        "trtllm_workspace_bytes": _TRTLLM_WORKSPACE_BYTES,
-        "trtllm_counter_buffer": "separate shape-sized uint8 storage",
-        "trtllm_counter_buffer_size": (
-            "4 * round_up(max(batch_size * num_qo_heads, sm_count), 8) bytes"
+        "reference_backend": reference_backend,
+        "reference_public_api": (
+            "flashinfer.mla.trtllm_batch_decode_with_kv_cache_mla"
         ),
-        "trtllm_workspace_zeroed_once_before_first_use": True,
-        "variable_seq_lens": (
-            "deterministic max-first, approximately half-to-full, "
-            "non-page-aligned tails for B>1"
-        ),
+        "reference_workspace_bytes": _TRTLLM_WORKSPACE_BYTES,
     }
+    if reference_backend == _CUTE_DSL_BACKEND:
+        semantics.update(
+            {
+                "cute_dsl_impl": "monolithic",
+                "cute_dsl_python_cross_backend_bucket_autotune": False,
+            }
+        )
+        return semantics
+    if reference_backend != _TRTLLM_BACKEND:
+        raise ValueError(f"unsupported reference backend {reference_backend!r}")
+    semantics.update(
+        {
+            "trtllm_backend": _TRTLLM_BACKEND,
+            "trtllm_enable_pdl": _TRTLLM_ENABLE_PDL,
+            "trtllm_is_var_seq": _TRTLLM_IS_VAR_SEQ,
+            "trtllm_uses_shared_paged_kv_idx": _TRTLLM_USES_SHARED_PAGED_KV_IDX,
+            "trtllm_sparse_mla_top_k": _TRTLLM_SPARSE_MLA_TOP_K,
+            "trtllm_sinks": None,
+            "trtllm_skip_softmax_threshold_scale_factor": None,
+            "trtllm_return_lse": False,
+            "trtllm_cum_seq_lens_q": None,
+            "trtllm_python_cross_backend_bucket_autotune": _TRTLLM_PYTHON_AUTOTUNE,
+            "trtllm_tactic": -1,
+            "trtllm_internal_shape_auto_selector": (
+                _TRTLLM_INTERNAL_SHAPE_AUTO_SELECTOR
+            ),
+            "trtllm_workspace_bytes": _TRTLLM_WORKSPACE_BYTES,
+            "trtllm_counter_buffer": "separate shape-sized uint8 storage",
+            "trtllm_counter_buffer_size": (
+                "4 * round_up(max(batch_size * num_qo_heads, sm_count), 8) bytes"
+            ),
+            "trtllm_workspace_zeroed_once_before_first_use": True,
+            "variable_seq_lens": (
+                "deterministic max-first, approximately half-to-full, "
+                "non-page-aligned tails for B>1"
+            ),
+        }
+    )
+    return semantics
 
 
 def _case_contract(
     spec: MLAPerformanceCaseSpec,
     source_session_sha256: str,
     prims_ts_interface: str = "wrapper",
+    reference_backend: str = _TRTLLM_BACKEND,
 ) -> dict[str, Any]:
     """Canonical immutable identity for one selected matrix row."""
 
@@ -649,7 +794,12 @@ def _case_contract(
         "kv_lora_rank": _KV_LORA_RANK,
         "qk_rope_head_dim": _QK_ROPE_HEAD_DIM,
         "output_dtype": "bf16",
-        "semantic_settings": _execution_semantics(prims_ts_interface, spec.seq_len_q),
+        "compile_reuse_group": spec.compile_reuse_group,
+        "semantic_settings": _execution_semantics(
+            prims_ts_interface,
+            spec.seq_len_q,
+            reference_backend,
+        ),
         "source_session_sha256": source_session_sha256,
     }
 
@@ -658,8 +808,14 @@ def _case_contract_record(
     spec: MLAPerformanceCaseSpec,
     source_session_sha256: str,
     prims_ts_interface: str = "wrapper",
+    reference_backend: str = _TRTLLM_BACKEND,
 ) -> dict[str, Any]:
-    contract = _case_contract(spec, source_session_sha256, prims_ts_interface)
+    contract = _case_contract(
+        spec,
+        source_session_sha256,
+        prims_ts_interface,
+        reference_backend,
+    )
     return {"contract": contract, "sha256": _canonical_sha256(contract)}
 
 
@@ -698,16 +854,21 @@ def _validate_row_case_contract(
     expected_interface = contract["semantic_settings"]["prims_ts_interface"]
     if row.get("attention_ts", {}).get("interface") != expected_interface:
         raise ValueError(f"resume row {case_id} PrimTS interface metadata differs")
-    trtllm = row.get("trtllm_gen", {})
-    if trtllm.get("enable_pdl") is not _TRTLLM_ENABLE_PDL:
-        raise ValueError(f"resume row {case_id} TRTLLM-gen PDL metadata differs")
-    if (
-        trtllm.get("internal_shape_auto_selector")
-        is not _TRTLLM_INTERNAL_SHAPE_AUTO_SELECTOR
-    ):
-        raise ValueError(
-            f"resume row {case_id} TRTLLM-gen auto-selector metadata differs"
-        )
+    reference_backend = contract["semantic_settings"]["reference_backend"]
+    reference_label = _reference_label(reference_backend)
+    reference = row.get(reference_label, {})
+    if reference.get("backend") != reference_backend:
+        raise ValueError(f"resume row {case_id} reference backend differs")
+    if reference_backend == _TRTLLM_BACKEND:
+        if reference.get("enable_pdl") is not _TRTLLM_ENABLE_PDL:
+            raise ValueError(f"resume row {case_id} TRTLLM-gen PDL metadata differs")
+        if (
+            reference.get("internal_shape_auto_selector")
+            is not _TRTLLM_INTERNAL_SHAPE_AUTO_SELECTOR
+        ):
+            raise ValueError(
+                f"resume row {case_id} TRTLLM-gen auto-selector metadata differs"
+            )
     if row.get("status") == "ok":
         paired = row.get("paired_two_order_cycles")
         required_paired_keys = {
@@ -732,7 +893,7 @@ def _validate_row_case_contract(
         if (
             paired["method"] != "alternating-order-balanced-total-duration-ratio"
             or paired["gate_formula"]
-            != "(sum(attention_ts_ms) / sum(trtllm_gen_ms) - 1) * 100"
+            != f"(sum(attention_ts_ms) / sum({reference_label}_ms) - 1) * 100"
         ):
             raise ValueError(f"resume row {case_id} has a different paired estimator")
         if _balanced_gap_percent(row) is None:
@@ -747,7 +908,7 @@ def _validate_row_case_contract(
             raise ValueError(
                 f"resume row {case_id} has an invalid two-order cycle count"
             )
-        backend_names = {"attention_ts", "trtllm_gen"}
+        backend_names = {"attention_ts", reference_label}
         for field in (
             "backend_total_duration_ms",
             "backend_arithmetic_mean_us",
@@ -807,7 +968,7 @@ def _validate_row_case_contract(
                 raise ValueError(
                     f"resume row {case_id} has inconsistent {backend} aggregates"
                 )
-        reference_total_ms = backend_totals["trtllm_gen"]
+        reference_total_ms = backend_totals[reference_label]
         if reference_total_ms == 0.0:
             raise ValueError(f"resume row {case_id} has zero reference duration")
         expected_gap_percent = (
@@ -849,8 +1010,10 @@ def _validate_row_case_contract(
 
 
 def _timing_contract(args) -> dict[str, Any]:
-    return {
-        "method": "paired-alternating-cold-l2-cuda-graphs",
+    reference_label = _reference_label(args.reference_backend)
+    contract = {
+        "method": f"paired-alternating-{args.timing_cache_mode}-cuda-graphs",
+        "cache_mode": args.timing_cache_mode,
         "separate_backend_graphs": True,
         "public_calls_per_graph": 1,
         "alternating_replay_order": True,
@@ -859,24 +1022,31 @@ def _timing_contract(args) -> dict[str, Any]:
         "two_order_cycle_count": args.iters // 2,
         "regression_gate_metric": _PAIRED_GATE_METRIC,
         "regression_gate_formula": (
-            "(sum(attention_ts_ms) / sum(trtllm_gen_ms) - 1) * 100"
+            f"(sum(attention_ts_ms) / sum({reference_label}_ms) - 1) * 100"
         ),
+        "reference_backend": args.reference_backend,
         "cycle_ratio_percentiles_are_diagnostic_only": True,
         "raw_samples_recorded": True,
         "backend_arithmetic_means_recorded": True,
         "first_second_position_summaries_recorded": True,
-        "cold_l2_strategy": (
-            "external-run-scoped-2x-l2-seeded-random-int8-add-before-event-v1"
-        ),
-        "l2_flush_multiplier": 2,
-        "l2_flush_timed": False,
-        "cold_l2_scrub": args.cold_l2_scrub_contract,
         "warmup_replays": args.warmup_iters,
         "sample_count": args.iters,
         "output_preallocated": True,
         "planning_and_first_calls_excluded": True,
         "prims_ts_interface": args.prims_ts_interface,
     }
+    if args.timing_cache_mode == "cold-l2":
+        contract.update(
+            {
+                "cold_l2_strategy": (
+                    "external-run-scoped-2x-l2-seeded-random-int8-add-before-event-v1"
+                ),
+                "l2_flush_multiplier": 2,
+                "l2_flush_timed": False,
+                "cold_l2_scrub": args.cold_l2_scrub_contract,
+            }
+        )
+    return contract
 
 
 def _oracle_precision_contract(torch) -> dict[str, Any]:
@@ -1127,9 +1297,11 @@ def _prepare_ts_call(case, spec, args, runtime, *, qkv_dtype, out) -> dict[str, 
 def _run_case(spec, args, runtime, cold_l2_scrubber) -> dict[str, Any]:
     torch = runtime["torch"]
     make_case = runtime["make_case"]
-    trtllm_decode = runtime["trtllm_decode"]
+    reference_decode = runtime["reference_decode"]
     cache_info = runtime["cache_info"]
     flashinfer = runtime["flashinfer"]
+    reference_backend = args.reference_backend
+    reference_label = _reference_label(reference_backend)
 
     qkv_dtype = _dtype_from_name(spec.dtype_name, torch)
     case = make_case(
@@ -1149,18 +1321,22 @@ def _run_case(spec, args, runtime, cold_l2_scrubber) -> dict[str, Any]:
         dtype=torch.bfloat16,
         device=case.query.device,
     )
-    trtllm_out = torch.empty_like(ts_out)
-    trtllm_workspace = torch.empty(
+    reference_out = torch.empty_like(ts_out)
+    reference_workspace = torch.empty(
         _TRTLLM_WORKSPACE_BYTES, dtype=torch.int8, device=case.query.device
     )
-    trtllm_counter_bytes = runtime["get_trtllm_counter_bytes"](
-        spec.batch_size,
-        spec.num_heads,
-        runtime["get_device_sm_count"](case.query.device),
-    )
-    trtllm_counter_buffer = torch.zeros(
-        trtllm_counter_bytes, dtype=torch.uint8, device=case.query.device
-    )
+    if reference_backend == _TRTLLM_BACKEND:
+        reference_counter_bytes = runtime["get_trtllm_counter_bytes"](
+            spec.batch_size,
+            spec.num_heads,
+            runtime["get_device_sm_count"](case.query.device),
+        )
+        reference_counter_buffer = torch.zeros(
+            reference_counter_bytes, dtype=torch.uint8, device=case.query.device
+        )
+    else:
+        reference_counter_bytes = 0
+        reference_counter_buffer = None
 
     prepared_ts = _prepare_ts_call(
         case,
@@ -1172,12 +1348,12 @@ def _run_case(spec, args, runtime, cold_l2_scrubber) -> dict[str, Any]:
     )
     run_ts = prepared_ts["call"]
 
-    def run_trtllm():
+    def run_reference():
         try:
-            return trtllm_decode(
+            return reference_decode(
                 query=case.query,
                 kv_cache=case.kv_cache,
-                workspace_buffer=trtllm_workspace,
+                workspace_buffer=reference_workspace,
                 qk_nope_head_dim=_QK_NOPE_HEAD_DIM,
                 kv_lora_rank=_KV_LORA_RANK,
                 qk_rope_head_dim=_QK_ROPE_HEAD_DIM,
@@ -1185,20 +1361,21 @@ def _run_case(spec, args, runtime, cold_l2_scrubber) -> dict[str, Any]:
                 seq_lens=case.seq_lens,
                 max_seq_len=spec.max_seq_len,
                 sparse_mla_top_k=_TRTLLM_SPARSE_MLA_TOP_K,
-                out=trtllm_out,
+                out=reference_out,
                 bmm1_scale=case.bmm1_scale,
                 bmm2_scale=case.bmm2_scale,
                 sinks=None,
                 skip_softmax_threshold_scale_factor=None,
                 enable_pdl=_TRTLLM_ENABLE_PDL,
-                backend=_TRTLLM_BACKEND,
+                backend=reference_backend,
+                cute_dsl_impl="monolithic",
                 is_var_seq=_TRTLLM_IS_VAR_SEQ,
                 uses_shared_paged_kv_idx=_TRTLLM_USES_SHARED_PAGED_KV_IDX,
                 lse=None,
                 return_lse=False,
                 cum_seq_lens_q=None,
                 max_q_len=None,
-                multi_ctas_kv_counter_buffer=trtllm_counter_buffer,
+                multi_ctas_kv_counter_buffer=reference_counter_buffer,
             )
         except (ImportError, OSError, RuntimeError) as error:
             diagnostic = _cuda_runtime_error(error)
@@ -1206,47 +1383,80 @@ def _run_case(spec, args, runtime, cold_l2_scrubber) -> dict[str, Any]:
                 raise
             raise diagnostic from error
 
-    # Disable only FlashInfer's Python cross-backend/bucket profiler. The
-    # forced TRTLLM-gen tactic (-1) still invokes its internal shape-specific
-    # auto-selector, while TS retains its independent automatic policy.
+    # Keep both explicit public backends out of FlashInfer's Python
+    # cross-backend profiler. PrimTS retains its independent automatic policy;
+    # TRTLLM-gen retains its internal shape selector when it is the reference.
     with flashinfer.autotune(_TRTLLM_PYTHON_AUTOTUNE):
         ts_result, ts_first_call_ms = _first_call(run_ts, torch)
         cache_after_first_call = cache_info()
-        trt_result, trt_first_call_ms = _first_call(run_trtllm, torch)
+        reference_result, reference_first_call_ms = _first_call(run_reference, torch)
         ts_error = _check_result("Attention-TS", ts_result, reference, spec, torch)
-        trt_error = _check_result("TRTLLM-gen", trt_result, reference, spec, torch)
-        counter_nonzero_after_first = _counter_nonzero(trtllm_counter_buffer, torch)
+        reference_error = _check_result(
+            reference_backend,
+            reference_result,
+            reference,
+            spec,
+            torch,
+        )
+        counter_nonzero_after_first = (
+            0
+            if reference_counter_buffer is None
+            else _counter_nonzero(reference_counter_buffer, torch)
+        )
         if counter_nonzero_after_first:
             raise AssertionError(
                 "TRTLLM-gen did not reset its workspace counter region after first call"
             )
 
-        ts_timing, trt_timing, paired_two_order_cycles = (
-            _time_paired_cold_l2_cuda_graphs(
-                run_ts,
-                run_trtllm,
-                torch=torch,
-                device=args.device,
-                batch_size=spec.batch_size,
-                warmup_replays=args.warmup_iters,
-                sample_count=args.iters,
-                scrubber=cold_l2_scrubber,
+        if args.timing_cache_mode == "cold-l2":
+            ts_timing, reference_timing, paired_two_order_cycles = (
+                _time_paired_cold_l2_cuda_graphs(
+                    run_ts,
+                    run_reference,
+                    torch=torch,
+                    device=args.device,
+                    batch_size=spec.batch_size,
+                    warmup_replays=args.warmup_iters,
+                    sample_count=args.iters,
+                    scrubber=cold_l2_scrubber,
+                    reference_label=reference_label,
+                )
             )
-        )
+        else:
+            ts_timing, reference_timing, paired_two_order_cycles = (
+                _time_paired_cuda_graphs(
+                    run_ts,
+                    run_reference,
+                    torch=torch,
+                    batch_size=spec.batch_size,
+                    warmup_replays=args.warmup_iters,
+                    sample_count=args.iters,
+                    calls_per_graph=1,
+                    reference_label=reference_label,
+                )
+            )
 
     ts_post = _check_result("Attention-TS after timing", ts_out, reference, spec, torch)
-    trt_post = _check_result(
-        "TRTLLM-gen after timing", trtllm_out, reference, spec, torch
+    reference_post = _check_result(
+        f"{reference_backend} after timing",
+        reference_out,
+        reference,
+        spec,
+        torch,
     )
-    counter_nonzero_after_timing = _counter_nonzero(trtllm_counter_buffer, torch)
+    counter_nonzero_after_timing = (
+        0
+        if reference_counter_buffer is None
+        else _counter_nonzero(reference_counter_buffer, torch)
+    )
     if counter_nonzero_after_timing:
         raise AssertionError(
             "TRTLLM-gen did not reset its workspace counter region after graph replay"
         )
 
-    backend_difference = (ts_out.float() - trtllm_out.float()).abs()
-    gap_us = ts_timing["median_us"] - trt_timing["median_us"]
-    gap_percent = gap_us / trt_timing["median_us"] * 100.0
+    backend_difference = (ts_out.float() - reference_out.float()).abs()
+    gap_us = ts_timing["median_us"] - reference_timing["median_us"]
+    gap_percent = gap_us / reference_timing["median_us"] * 100.0
     balanced_gap_percent = paired_two_order_cycles["gap_percent_total_duration_ratio"]
     performance_disposition = _performance_disposition(
         gap_percent,
@@ -1254,9 +1464,116 @@ def _run_case(spec, args, runtime, cold_l2_scrubber) -> dict[str, Any]:
         args.gap_threshold,
     )
     seq_lens = [int(value) for value in case.seq_lens.tolist()]
-    return {
+    attention_ts_record = {
+        "interface": prepared_ts["interface"],
+        "public_api": prepared_ts["public_api"],
+        "setup_kind": prepared_ts["setup_kind"],
+        "setup_ms": prepared_ts["setup_ms"],
+        # Compatibility field retained for existing CSV consumers.
+        "plan_ms": prepared_ts["setup_ms"],
+        "workspace_bytes": prepared_ts["workspace_bytes"],
+        "first_call_ms": ts_first_call_ms,
+        "compiled_during_plan": (
+            prepared_ts["interface"] == "wrapper"
+            and prepared_ts["cache_after_setup"].misses
+            > prepared_ts["cache_before_setup"].misses
+        ),
+        "compiled_during_setup": (
+            prepared_ts["cache_after_setup"].misses
+            > prepared_ts["cache_before_setup"].misses
+        ),
+        "compiled_on_first_call": (
+            cache_after_first_call.misses > prepared_ts["cache_after_setup"].misses
+        ),
+        "policy": prepared_ts["policy"],
+        "cache_before_plan": _cache_info_dict(prepared_ts["cache_before_setup"]),
+        "cache_after_plan": _cache_info_dict(prepared_ts["cache_after_setup"]),
+        "cache_after_first_call": _cache_info_dict(cache_after_first_call),
+        **ts_timing,
+        **ts_error,
+        "post_timing_max_abs_error": ts_post["max_abs_error"],
+        "post_timing_mean_abs_error": ts_post["mean_abs_error"],
+        "post_timing_relative_l2_error": ts_post["relative_l2_error"],
+    }
+    reference_record = {
+        "first_call_ms": reference_first_call_ms,
+        "backend": reference_backend,
+        "workspace_bytes": _TRTLLM_WORKSPACE_BYTES,
+        "counter_buffer_bytes": reference_counter_bytes,
+        "counter_nonzero_after_first": counter_nonzero_after_first,
+        "counter_nonzero_after_timing": counter_nonzero_after_timing,
+        **reference_timing,
+        **reference_error,
+        "post_timing_max_abs_error": reference_post["max_abs_error"],
+        "post_timing_mean_abs_error": reference_post["mean_abs_error"],
+        "post_timing_relative_l2_error": reference_post["relative_l2_error"],
+    }
+    if reference_backend == _TRTLLM_BACKEND:
+        reference_record.update(
+            {
+                "enable_pdl": _TRTLLM_ENABLE_PDL,
+                "is_var_seq": _TRTLLM_IS_VAR_SEQ,
+                "uses_shared_paged_kv_idx": _TRTLLM_USES_SHARED_PAGED_KV_IDX,
+                "python_cross_backend_bucket_autotune": _TRTLLM_PYTHON_AUTOTUNE,
+                "tactic": -1,
+                "internal_shape_auto_selector": (_TRTLLM_INTERNAL_SHAPE_AUTO_SELECTOR),
+            }
+        )
+    else:
+        reference_record.update(
+            {
+                "cute_dsl_impl": "monolithic",
+                "python_cross_backend_bucket_autotune": False,
+            }
+        )
+
+    comparison_contract = {
+        "execution_apis_public": True,
+        "implementation_state_used_only_for_diagnostics": True,
+        "selected_prims_ts_interface": prepared_ts["interface"],
+        "standalone_uses_explicit_seq_lens": (prepared_ts["interface"] == "standalone"),
+        "standalone_uses_queried_caller_workspace": (
+            prepared_ts["interface"] == "standalone"
+        ),
+        "reference_backend": reference_backend,
+        "single_fixture_instance": True,
+        "same_query_object": True,
+        "same_query_layout": True,
+        "query_layout": "B,SQ,H,D",
+        "same_kv_cache_object": True,
+        "same_block_tables_object": True,
+        "same_seq_lens_object": True,
+        "same_bmm1_scale": True,
+        "same_bmm2_scale": True,
+        "same_backend_neutral_fp32_reference": True,
+        "stable_separate_output_buffers": True,
+        "same_output_layout": True,
+        "output_layout": "B,SQ,H,D",
+        "separate_backend_workspaces": True,
+        "bottom_right_causal_reference": True,
+        "sq1_causal_dense_equivalence": spec.seq_len_q == 1,
+        "attention_ts_auto_policy": prepared_ts["policy"].get("source") == "auto",
+    }
+    if reference_backend == _TRTLLM_BACKEND:
+        comparison_contract.update(
+            {
+                "trtllm_backend_forced": _TRTLLM_BACKEND,
+                "trtllm_enable_pdl": _TRTLLM_ENABLE_PDL,
+                "trtllm_python_cross_backend_bucket_autotune": (
+                    _TRTLLM_PYTHON_AUTOTUNE
+                ),
+                "trtllm_internal_shape_auto_selector": (
+                    _TRTLLM_INTERNAL_SHAPE_AUTO_SELECTOR
+                ),
+            }
+        )
+    else:
+        comparison_contract["cute_dsl_impl"] = "monolithic"
+
+    result = {
         "status": "ok",
         "case_id": spec.case_id,
+        "reference_backend": reference_backend,
         "shape": {
             "batch_size": spec.batch_size,
             "q_len": spec.seq_len_q,
@@ -1280,98 +1597,23 @@ def _run_case(spec, args, runtime, cold_l2_scrubber) -> dict[str, Any]:
             "bmm1_scale": case.bmm1_scale,
             "bmm2_scale": case.bmm2_scale,
         },
-        "attention_ts": {
-            "interface": prepared_ts["interface"],
-            "public_api": prepared_ts["public_api"],
-            "setup_kind": prepared_ts["setup_kind"],
-            "setup_ms": prepared_ts["setup_ms"],
-            # Compatibility field retained for existing CSV consumers.
-            "plan_ms": prepared_ts["setup_ms"],
-            "workspace_bytes": prepared_ts["workspace_bytes"],
-            "first_call_ms": ts_first_call_ms,
-            "compiled_during_plan": (
-                prepared_ts["interface"] == "wrapper"
-                and prepared_ts["cache_after_setup"].misses
-                > prepared_ts["cache_before_setup"].misses
-            ),
-            "compiled_during_setup": (
-                prepared_ts["cache_after_setup"].misses
-                > prepared_ts["cache_before_setup"].misses
-            ),
-            "compiled_on_first_call": (
-                cache_after_first_call.misses > prepared_ts["cache_after_setup"].misses
-            ),
-            "policy": prepared_ts["policy"],
-            "cache_before_plan": _cache_info_dict(prepared_ts["cache_before_setup"]),
-            "cache_after_plan": _cache_info_dict(prepared_ts["cache_after_setup"]),
-            "cache_after_first_call": _cache_info_dict(cache_after_first_call),
-            **ts_timing,
-            **ts_error,
-            "post_timing_max_abs_error": ts_post["max_abs_error"],
-            "post_timing_mean_abs_error": ts_post["mean_abs_error"],
-            "post_timing_relative_l2_error": ts_post["relative_l2_error"],
-        },
-        "trtllm_gen": {
-            "first_call_ms": trt_first_call_ms,
-            "backend": _TRTLLM_BACKEND,
-            "enable_pdl": _TRTLLM_ENABLE_PDL,
-            "is_var_seq": _TRTLLM_IS_VAR_SEQ,
-            "uses_shared_paged_kv_idx": _TRTLLM_USES_SHARED_PAGED_KV_IDX,
-            "python_cross_backend_bucket_autotune": _TRTLLM_PYTHON_AUTOTUNE,
-            "tactic": -1,
-            "internal_shape_auto_selector": _TRTLLM_INTERNAL_SHAPE_AUTO_SELECTOR,
-            "workspace_bytes": _TRTLLM_WORKSPACE_BYTES,
-            "counter_buffer_bytes": trtllm_counter_bytes,
-            "counter_nonzero_after_first": counter_nonzero_after_first,
-            "counter_nonzero_after_timing": counter_nonzero_after_timing,
-            **trt_timing,
-            **trt_error,
-            "post_timing_max_abs_error": trt_post["max_abs_error"],
-            "post_timing_mean_abs_error": trt_post["mean_abs_error"],
-            "post_timing_relative_l2_error": trt_post["relative_l2_error"],
-        },
-        "comparison_contract": {
-            "execution_apis_public": True,
-            "implementation_state_used_only_for_diagnostics": True,
-            "selected_prims_ts_interface": prepared_ts["interface"],
-            "standalone_uses_explicit_seq_lens": (
-                prepared_ts["interface"] == "standalone"
-            ),
-            "standalone_uses_queried_caller_workspace": (
-                prepared_ts["interface"] == "standalone"
-            ),
-            "single_fixture_instance": True,
-            "same_query_object": True,
-            "same_query_layout": True,
-            "query_layout": "B,SQ,H,D",
-            "same_kv_cache_object": True,
-            "same_block_tables_object": True,
-            "same_seq_lens_object": True,
-            "same_bmm1_scale": True,
-            "same_bmm2_scale": True,
-            "same_backend_neutral_fp32_reference": True,
-            "stable_separate_output_buffers": True,
-            "same_output_layout": True,
-            "output_layout": "B,SQ,H,D",
-            "separate_backend_workspaces": True,
-            "bottom_right_causal_reference": True,
-            "sq1_causal_dense_equivalence": spec.seq_len_q == 1,
-            "trtllm_backend_forced": _TRTLLM_BACKEND,
-            "trtllm_enable_pdl": _TRTLLM_ENABLE_PDL,
-            "trtllm_python_cross_backend_bucket_autotune": (_TRTLLM_PYTHON_AUTOTUNE),
-            "trtllm_internal_shape_auto_selector": (
-                _TRTLLM_INTERNAL_SHAPE_AUTO_SELECTOR
-            ),
-            "attention_ts_auto_policy": (prepared_ts["policy"].get("source") == "auto"),
-        },
-        "attention_ts_speedup": trt_timing["median_us"] / ts_timing["median_us"],
+        "attention_ts": attention_ts_record,
+        reference_label: reference_record,
+        "comparison_contract": comparison_contract,
+        "reference_over_attention_ts": (
+            reference_timing["median_us"] / ts_timing["median_us"]
+        ),
         "attention_ts_gap_us": gap_us,
-        "attention_ts_gap_percent_vs_trtllm_gen": gap_percent,
+        "attention_ts_gap_percent_vs_reference": gap_percent,
         "paired_two_order_cycles": paired_two_order_cycles,
         "performance_disposition": performance_disposition,
         "backend_max_abs_difference": float(backend_difference.max().item()),
         "backend_mean_abs_difference": float(backend_difference.mean().item()),
     }
+    if reference_backend == _TRTLLM_BACKEND:
+        result["attention_ts_speedup"] = result["reference_over_attention_ts"]
+        result["attention_ts_gap_percent_vs_trtllm_gen"] = gap_percent
+    return result
 
 
 def _error_result(
@@ -1379,10 +1621,27 @@ def _error_result(
     error: BaseException,
     prims_ts_interface: str = "wrapper",
     gap_threshold: float = 5.0,
+    reference_backend: str = _TRTLLM_BACKEND,
 ) -> dict[str, Any]:
+    reference_label = _reference_label(reference_backend)
+    reference_record = {"backend": reference_backend}
+    if reference_backend == _TRTLLM_BACKEND:
+        reference_record.update(
+            {
+                "enable_pdl": _TRTLLM_ENABLE_PDL,
+                "is_var_seq": _TRTLLM_IS_VAR_SEQ,
+                "uses_shared_paged_kv_idx": _TRTLLM_USES_SHARED_PAGED_KV_IDX,
+                "python_cross_backend_bucket_autotune": _TRTLLM_PYTHON_AUTOTUNE,
+                "tactic": -1,
+                "internal_shape_auto_selector": (_TRTLLM_INTERNAL_SHAPE_AUTO_SELECTOR),
+            }
+        )
+    else:
+        reference_record["cute_dsl_impl"] = "monolithic"
     return {
         "status": "error",
         "case_id": spec.case_id,
+        "reference_backend": reference_backend,
         "shape": {
             "batch_size": spec.batch_size,
             "q_len": spec.seq_len_q,
@@ -1397,15 +1656,7 @@ def _error_result(
             "fixture_seed": spec.seed,
         },
         "attention_ts": {"interface": prims_ts_interface},
-        "trtllm_gen": {
-            "backend": _TRTLLM_BACKEND,
-            "enable_pdl": _TRTLLM_ENABLE_PDL,
-            "is_var_seq": _TRTLLM_IS_VAR_SEQ,
-            "uses_shared_paged_kv_idx": _TRTLLM_USES_SHARED_PAGED_KV_IDX,
-            "python_cross_backend_bucket_autotune": _TRTLLM_PYTHON_AUTOTUNE,
-            "tactic": -1,
-            "internal_shape_auto_selector": _TRTLLM_INTERNAL_SHAPE_AUTO_SELECTOR,
-        },
+        reference_label: reference_record,
         "paired_two_order_cycles": None,
         "performance_disposition": {
             "threshold_percent": gap_threshold,
@@ -1420,6 +1671,28 @@ def _error_result(
     }
 
 
+def _validate_compile_reuse(
+    spec: MLAPerformanceCaseSpec,
+    result: dict[str, Any],
+    completed_groups: set[str],
+) -> None:
+    """Require a later row in an explicit group to reuse its compiled topology."""
+
+    group = spec.compile_reuse_group
+    if group is None or result.get("status") != "ok":
+        return
+    if group in completed_groups:
+        attention_ts = result["attention_ts"]
+        if (
+            attention_ts["compiled_during_setup"]
+            or attention_ts["compiled_on_first_call"]
+        ):
+            raise AssertionError(
+                f"batch-only topology change recompiled group {group} at {spec.case_id}"
+            )
+    completed_groups.add(group)
+
+
 def _load_json(path: Path) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text())
@@ -1430,8 +1703,15 @@ def _load_json(path: Path) -> dict[str, Any]:
     return payload
 
 
+def _reference_record(result: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
+    backend = result.get("reference_backend", _TRTLLM_BACKEND)
+    label = _reference_label(backend)
+    return backend, label, result.get(label, {})
+
+
 def _row_for_csv(result: dict[str, Any], execution_index: int) -> dict[str, Any]:
     shape = result["shape"]
+    reference_backend, reference_label, reference = _reference_record(result)
     row: dict[str, Any] = {
         "execution_index": execution_index,
         "case_id": result["case_id"],
@@ -1452,6 +1732,7 @@ def _row_for_csv(result: dict[str, Any], execution_index: int) -> dict[str, Any]
         "source_session_sha256": result.get("source_session_sha256", ""),
         "case_contract_sha256": result.get("case_contract_sha256", ""),
         "prims_ts_interface": result.get("attention_ts", {}).get("interface", ""),
+        "reference_backend": reference_backend,
         "trtllm_backend": result.get("trtllm_gen", {}).get("backend", ""),
         "trtllm_enable_pdl": result.get("trtllm_gen", {}).get("enable_pdl", ""),
         "trtllm_python_autotune": result.get("trtllm_gen", {}).get(
@@ -1471,22 +1752,22 @@ def _row_for_csv(result: dict[str, Any], execution_index: int) -> dict[str, Any]
     if result.get("status") != "ok":
         return row
     ts = result["attention_ts"]
-    trt = result["trtllm_gen"]
     policy = ts["policy"]
     paired = result.get("paired_two_order_cycles", {})
     disposition = result.get("performance_disposition", {})
+    position_summaries = paired.get("position_summaries", {})
     row.update(
         {
             "ts_median_us": ts["median_us"],
-            "trtllm_gen_median_us": trt["median_us"],
+            "reference_median_us": reference["median_us"],
             "ts_arithmetic_mean_us": ts["arithmetic_mean_us"],
-            "trtllm_gen_arithmetic_mean_us": trt["arithmetic_mean_us"],
+            "reference_arithmetic_mean_us": reference["arithmetic_mean_us"],
             "ts_p95_us": ts["p95_us"],
-            "trtllm_gen_p95_us": trt["p95_us"],
+            "reference_p95_us": reference["p95_us"],
             "ts_gap_us": result["attention_ts_gap_us"],
-            "ts_gap_percent": result["attention_ts_gap_percent_vs_trtllm_gen"],
+            "ts_gap_percent": result["attention_ts_gap_percent_vs_reference"],
             "raw_independent_median_gap_percent": result[
-                "attention_ts_gap_percent_vs_trtllm_gen"
+                "attention_ts_gap_percent_vs_reference"
             ],
             "order_balanced_total_duration_gap_percent": paired.get(
                 "gap_percent_total_duration_ratio", ""
@@ -1500,20 +1781,20 @@ def _row_for_csv(result: dict[str, Any], execution_index: int) -> dict[str, Any]
                 "sample_count_per_backend", ""
             ),
             "paired_two_order_cycle_count": paired.get("cycle_count", ""),
-            "ts_first_position_mean_us": paired.get("position_summaries", {})
-            .get("attention_ts", {})
+            "ts_first_position_mean_us": position_summaries.get("attention_ts", {})
             .get("first", {})
             .get("arithmetic_mean_us", ""),
-            "ts_second_position_mean_us": paired.get("position_summaries", {})
-            .get("attention_ts", {})
+            "ts_second_position_mean_us": position_summaries.get("attention_ts", {})
             .get("second", {})
             .get("arithmetic_mean_us", ""),
-            "trtllm_gen_first_position_mean_us": paired.get("position_summaries", {})
-            .get("trtllm_gen", {})
+            "reference_first_position_mean_us": position_summaries.get(
+                reference_label, {}
+            )
             .get("first", {})
             .get("arithmetic_mean_us", ""),
-            "trtllm_gen_second_position_mean_us": paired.get("position_summaries", {})
-            .get("trtllm_gen", {})
+            "reference_second_position_mean_us": position_summaries.get(
+                reference_label, {}
+            )
             .get("second", {})
             .get("arithmetic_mean_us", ""),
             "performance_disposition": disposition.get(
@@ -1524,16 +1805,16 @@ def _row_for_csv(result: dict[str, Any], execution_index: int) -> dict[str, Any]
                 "balanced_exceeds_threshold", ""
             ),
             "regression_gate_metric": disposition.get("gate_metric", ""),
-            "trt_over_ts": result["attention_ts_speedup"],
+            "reference_over_ts": result["reference_over_attention_ts"],
             "ts_plan_ms": ts["plan_ms"],
             "ts_setup_kind": ts.get("setup_kind", "plan"),
             "ts_workspace_bytes": ts.get("workspace_bytes", ""),
             "ts_first_call_ms": ts["first_call_ms"],
-            "trtllm_gen_first_call_ms": trt["first_call_ms"],
+            "reference_first_call_ms": reference["first_call_ms"],
             "ts_max_abs_error": ts["max_abs_error"],
             "ts_relative_l2_error": ts["relative_l2_error"],
-            "trtllm_gen_max_abs_error": trt["max_abs_error"],
-            "trtllm_gen_relative_l2_error": trt["relative_l2_error"],
+            "reference_max_abs_error": reference["max_abs_error"],
+            "reference_relative_l2_error": reference["relative_l2_error"],
             "backend_max_abs_difference": result["backend_max_abs_difference"],
             "policy_kernel": policy.get("kernel"),
             "policy_source": policy.get("source"),
@@ -1553,6 +1834,24 @@ def _row_for_csv(result: dict[str, Any], execution_index: int) -> dict[str, Any]
             "timing_mode": ts["timing_mode"],
         }
     )
+    if reference_backend == _TRTLLM_BACKEND:
+        row.update(
+            {
+                "trtllm_gen_median_us": reference["median_us"],
+                "trtllm_gen_arithmetic_mean_us": reference["arithmetic_mean_us"],
+                "trtllm_gen_p95_us": reference["p95_us"],
+                "trtllm_gen_first_position_mean_us": row[
+                    "reference_first_position_mean_us"
+                ],
+                "trtllm_gen_second_position_mean_us": row[
+                    "reference_second_position_mean_us"
+                ],
+                "trt_over_ts": result["reference_over_attention_ts"],
+                "trtllm_gen_first_call_ms": reference["first_call_ms"],
+                "trtllm_gen_max_abs_error": reference["max_abs_error"],
+                "trtllm_gen_relative_l2_error": reference["relative_l2_error"],
+            }
+        )
     return row
 
 
@@ -1595,15 +1894,19 @@ def _render_csv(results: Sequence[dict[str, Any]]) -> str:
         "source_session_sha256",
         "case_contract_sha256",
         "prims_ts_interface",
+        "reference_backend",
         "trtllm_backend",
         "trtllm_enable_pdl",
         "trtllm_python_autotune",
         "trtllm_internal_shape_auto_selector",
         "ts_median_us",
+        "reference_median_us",
         "trtllm_gen_median_us",
         "ts_arithmetic_mean_us",
+        "reference_arithmetic_mean_us",
         "trtllm_gen_arithmetic_mean_us",
         "ts_p95_us",
+        "reference_p95_us",
         "trtllm_gen_p95_us",
         "ts_gap_us",
         "ts_gap_percent",
@@ -1618,20 +1921,26 @@ def _render_csv(results: Sequence[dict[str, Any]]) -> str:
         "paired_two_order_cycle_count",
         "ts_first_position_mean_us",
         "ts_second_position_mean_us",
+        "reference_first_position_mean_us",
+        "reference_second_position_mean_us",
         "trtllm_gen_first_position_mean_us",
         "trtllm_gen_second_position_mean_us",
         "performance_disposition",
         "raw_exceeds_threshold",
         "balanced_exceeds_threshold",
         "regression_gate_metric",
+        "reference_over_ts",
         "trt_over_ts",
         "ts_plan_ms",
         "ts_setup_kind",
         "ts_workspace_bytes",
         "ts_first_call_ms",
+        "reference_first_call_ms",
         "trtllm_gen_first_call_ms",
         "ts_max_abs_error",
         "ts_relative_l2_error",
+        "reference_max_abs_error",
+        "reference_relative_l2_error",
         "trtllm_gen_max_abs_error",
         "trtllm_gen_relative_l2_error",
         "backend_max_abs_difference",
@@ -1698,8 +2007,23 @@ def _render_markdown(results: Sequence[dict[str, Any]], gap_threshold: float) ->
     if len(interfaces) > 1:
         raise ValueError("cannot render results from mixed PrimTS interfaces")
     prims_ts_interface = next(iter(interfaces), "wrapper")
+    timing_modes = {
+        result.get("attention_ts", {}).get("timing_mode")
+        for result in successful
+        if result.get("attention_ts", {}).get("timing_mode")
+    }
+    if len(timing_modes) > 1:
+        raise ValueError("cannot render results with mixed timing modes")
+    timing_mode = next(iter(timing_modes), "not-recorded")
+    reference_backends = {
+        result.get("reference_backend", _TRTLLM_BACKEND) for result in results
+    }
+    if len(reference_backends) > 1:
+        raise ValueError("cannot render results with mixed reference backends")
+    reference_backend = next(iter(reference_backends), _TRTLLM_BACKEND)
+    reference_name = _reference_display_name(reference_backend)
     lines = [
-        "# Attention-TS versus TRTLLM-gen MLA decode",
+        f"# Attention-TS versus {reference_name} MLA decode",
         "",
         (
             f"Rows: {len(results)}; successful: {len(successful)}; errors: "
@@ -1711,17 +2035,17 @@ def _render_markdown(results: Sequence[dict[str, Any]], gap_threshold: float) ->
         ),
         "",
         f"Source session: `{source_session}`. PrimTS interface: "
-        f"`{prims_ts_interface}`. TRTLLM-gen PDL: `False`.",
+        f"`{prims_ts_interface}`. Reference backend: `{reference_backend}`.",
         "",
-        "Timing uses paired alternating one-call CUDA graphs with an untimed "
-        "non-compressible 2x-L2 scrub before every replay. Raw gap compares "
+        f"Timing uses `{timing_mode}` with paired alternating one-call CUDA "
+        "graphs. Raw gap compares "
         "the two independent sample medians. Balanced gap is exactly the ratio "
-        "of total TS duration to total TRTLLM-gen duration over complete "
+        f"of total TS duration to total {reference_name} duration over complete "
         "opposite-order cycles and is the regression gate. Per-cycle "
         "percentiles are diagnostics only. Rows are sorted from worst balanced "
         "TS gap to best.",
         "",
-        "| Rank | Case | B | Q | Hq | KV range | Dtype | TS us | TRT us | Raw gap % | Balanced total gap % | Disposition | Kernel/profile | TileQ/TileKV | Inst/Split | V CTAs/V width | cluster | Persistent |",
+        f"| Rank | Case | B | Q | Hq | KV range | Dtype | TS us | {reference_name} us | Raw gap % | Balanced total gap % | Disposition | Kernel/profile | TileQ/TileKV | Inst/Split | V CTAs/V width | cluster | Persistent |",
         "|---:|---|---:|---:|---:|---|---|---:|---:|---:|---:|---|---|---|---|---|---|---|",
     ]
     rank = 0
@@ -1738,7 +2062,7 @@ def _render_markdown(results: Sequence[dict[str, Any]], gap_threshold: float) ->
         rank += 1
         shape = result["shape"]
         ts = result["attention_ts"]
-        trt = result["trtllm_gen"]
+        _, _, reference = _reference_record(result)
         policy = ts["policy"]
         profile = policy.get("profile") or "-"
         balanced_gap = _balanced_gap_percent(result)
@@ -1750,8 +2074,8 @@ def _render_markdown(results: Sequence[dict[str, Any]], gap_threshold: float) ->
             f"{shape['q_len']} | {shape['num_qo_heads']} | "
             f"{shape['min_seq_len']}..{shape['max_seq_len']} | "
             f"{shape['input_dtype']}→bf16 | {ts['median_us']:.3f} | "
-            f"{trt['median_us']:.3f} | "
-            f"{result['attention_ts_gap_percent_vs_trtllm_gen']:+.3f} | "
+            f"{reference['median_us']:.3f} | "
+            f"{result['attention_ts_gap_percent_vs_reference']:+.3f} | "
             f"{'-' if balanced_gap is None else f'{balanced_gap:+.3f}'} | "
             f"{disposition} | "
             f"{policy.get('kernel')}/{profile} | "
@@ -1851,7 +2175,11 @@ def _write_outputs(args, payload) -> None:
         )
 
 
-def _collect_provenance(args, runtime) -> dict[str, Any]:
+def _collect_provenance(
+    args,
+    runtime,
+    specs: Sequence[MLAPerformanceCaseSpec],
+) -> dict[str, Any]:
     """Collect portable provenance without serializing local paths or environment."""
 
     torch = runtime["torch"]
@@ -1864,15 +2192,33 @@ def _collect_provenance(args, runtime) -> dict[str, Any]:
         cubin_version = importlib.metadata.version("flashinfer-cubin")
     except importlib.metadata.PackageNotFoundError:
         cubin_version = None
+    cutlass_version = getattr(cutlass, "__version__", "unknown")
+    if cutlass_version.partition("+")[0] != _EXPECTED_CUTLASS_DSL_VERSION:
+        raise RuntimeError(
+            f"expected imported CUTLASS DSL {_EXPECTED_CUTLASS_DSL_VERSION}, "
+            f"got {cutlass_version}"
+        )
 
-    artifact_manifest = (
-        Path(FLASHINFER_CUBIN_DIR) / ArtifactPath.TRTLLM_GEN_FMHA / "checksums.txt"
-    )
-    artifact_manifest_sha = _validate_trt_artifact_manifest(
-        artifact_manifest,
-        CheckSumHash.TRTLLM_GEN_FMHA,
-        os.environ.get("FLASHINFER_CUBIN_CHECKSUM_DISABLED"),
-    )
+    artifact = None
+    if args.reference_backend == _TRTLLM_BACKEND:
+        artifact_manifest = (
+            Path(FLASHINFER_CUBIN_DIR) / ArtifactPath.TRTLLM_GEN_FMHA / "checksums.txt"
+        )
+        artifact_manifest_sha = _validate_trt_artifact_manifest(
+            artifact_manifest,
+            CheckSumHash.TRTLLM_GEN_FMHA,
+            os.environ.get("FLASHINFER_CUBIN_CHECKSUM_DISABLED"),
+        )
+        artifact = {
+            "artifact_path": ArtifactPath.TRTLLM_GEN_FMHA,
+            "expected_manifest_sha256": CheckSumHash.TRTLLM_GEN_FMHA,
+            "verified_manifest_sha256": artifact_manifest_sha,
+            "flashinfer_cubin_version": cubin_version,
+            "flashinfer_cubin_matches_flashinfer": (
+                cubin_version
+                == getattr(runtime["flashinfer"], "__version__", "unknown")
+            ),
+        }
     source_control = {
         "flashinfer_git_head": _git_value("rev-parse", "HEAD"),
         "flashinfer_tracked_worktree_dirty": bool(
@@ -1885,8 +2231,11 @@ def _collect_provenance(args, runtime) -> dict[str, Any]:
         "torch_cuda": torch.version.cuda,
         "flashinfer": getattr(runtime["flashinfer"], "__version__", "unknown"),
         "flashinfer_cubin": cubin_version,
-        "nvidia_cutlass_dsl": importlib.metadata.version("nvidia-cutlass-dsl"),
-        "cutlass": getattr(cutlass, "__version__", "unknown"),
+        "nvidia_cutlass_dsl": cutlass_version,
+        "nvidia_cutlass_dsl_distribution": importlib.metadata.version(
+            "nvidia-cutlass-dsl"
+        ),
+        "cutlass": cutlass_version,
     }
     gpu = {
         "device_index": args.device,
@@ -1896,16 +2245,15 @@ def _collect_provenance(args, runtime) -> dict[str, Any]:
         "total_memory_bytes": properties.total_memory,
         "l2_cache_bytes": properties.L2_cache_size,
     }
-    artifact = {
-        "artifact_path": ArtifactPath.TRTLLM_GEN_FMHA,
-        "expected_manifest_sha256": CheckSumHash.TRTLLM_GEN_FMHA,
-        "verified_manifest_sha256": artifact_manifest_sha,
-        "flashinfer_cubin_version": cubin_version,
-        "flashinfer_cubin_matches_flashinfer": (
-            cubin_version == getattr(runtime["flashinfer"], "__version__", "unknown")
-        ),
+    semantics_by_q_len = {
+        str(seq_len_q): _execution_semantics(
+            args.prims_ts_interface,
+            seq_len_q,
+            args.reference_backend,
+        )
+        for seq_len_q in sorted({spec.seq_len_q for spec in specs})
     }
-    semantics = _execution_semantics(args.prims_ts_interface, args.q_len)
+    public_api = next(iter(semantics_by_q_len.values()))["prims_ts_public_api"]
     timing = _timing_contract(args)
     source_hashes = _public_source_hashes()
     execution_dependencies = {
@@ -1913,12 +2261,29 @@ def _collect_provenance(args, runtime) -> dict[str, Any]:
         "versions": versions,
         "gpu": gpu,
         "source_hashes": source_hashes,
-        "trtllm_artifact": artifact,
-        "semantic_contract": semantics,
+        "reference_backend": args.reference_backend,
+        "semantic_contracts_by_q_len": semantics_by_q_len,
         "oracle_precision": _oracle_precision_contract(torch),
         "timing_contract": timing,
     }
+    if artifact is not None:
+        execution_dependencies["trtllm_artifact"] = artifact
     dependencies_sha256 = _canonical_sha256(execution_dependencies)
+    reference_label = _reference_label(args.reference_backend)
+    reference_provenance = {
+        "public_api": "flashinfer.mla.trtllm_batch_decode_with_kv_cache_mla",
+        "backend": args.reference_backend,
+    }
+    if args.reference_backend == _TRTLLM_BACKEND:
+        reference_provenance.update(
+            {
+                "enable_pdl": _TRTLLM_ENABLE_PDL,
+                "tactic": -1,
+                "artifact": artifact,
+            }
+        )
+    else:
+        reference_provenance["cute_dsl_impl"] = "monolithic"
     return {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "execution_dependencies_sha256": dependencies_sha256,
@@ -1927,24 +2292,19 @@ def _collect_provenance(args, runtime) -> dict[str, Any]:
         "gpu": gpu,
         "attention_ts_mla": {
             "interface": args.prims_ts_interface,
-            "public_api": semantics["prims_ts_public_api"],
+            "public_api": public_api,
             "integration_source_sha256": source_hashes["attention_ts"],
             "compile_cache": _cache_info_dict(runtime["cache_info"]()),
         },
-        "trtllm_gen": {
-            "public_api": "flashinfer.mla.trtllm_batch_decode_with_kv_cache_mla",
-            "backend": _TRTLLM_BACKEND,
-            "enable_pdl": _TRTLLM_ENABLE_PDL,
-            "tactic": -1,
-            "artifact": artifact,
-        },
+        reference_label: reference_provenance,
         "matrix": {
-            "num_heads": list(_HEADS),
-            "batch_sizes": list(_BATCH_SIZES),
-            "max_seq_lens": list(_MAX_SEQ_LENS),
-            "input_dtypes": list(_DTYPES),
+            "suite": args.suite,
+            "num_heads": sorted({spec.num_heads for spec in specs}),
+            "batch_sizes": sorted({spec.batch_size for spec in specs}),
+            "max_seq_lens": sorted({spec.max_seq_len for spec in specs}),
+            "input_dtypes": sorted({spec.dtype_name for spec in specs}),
             "output_dtype": "bf16",
-            "q_len": args.q_len,
+            "q_lens": sorted({spec.seq_len_q for spec in specs}),
             "page_size": _PAGE_SIZE,
         },
         "timing": timing,
@@ -1957,6 +2317,8 @@ def _collect_provenance(args, runtime) -> dict[str, Any]:
             "iters": args.iters,
             "gap_threshold_percent": args.gap_threshold,
             "prims_ts_interface": args.prims_ts_interface,
+            "reference_backend": args.reference_backend,
+            "timing_cache_mode": args.timing_cache_mode,
         },
     }
 
@@ -1977,6 +2339,8 @@ def _run_signature(
             "continue_on_error": args.continue_on_error,
             "fail_on_regression": args.fail_on_regression,
             "prims_ts_interface": getattr(args, "prims_ts_interface", "wrapper"),
+            "reference_backend": args.reference_backend,
+            "timing_cache_mode": args.timing_cache_mode,
         },
     }
     source_session_sha256 = _canonical_sha256(contract)
@@ -2017,9 +2381,17 @@ def _resume_results(
         .get("run_controls", {})
         .get("prims_ts_interface", "wrapper")
     )
+    reference_backend = (
+        signature["contract"]
+        .get("run_controls", {})
+        .get("reference_backend", _TRTLLM_BACKEND)
+    )
     expected_case_records = {
         spec.case_id: _case_contract_record(
-            spec, source_session_sha256, prims_ts_interface
+            spec,
+            source_session_sha256,
+            prims_ts_interface,
+            reference_backend,
         )
         for spec in specs
     }
@@ -2054,7 +2426,8 @@ def _print_result(result: dict[str, Any]) -> None:
         )
         return
     ts = result["attention_ts"]
-    trt = result["trtllm_gen"]
+    reference_backend, _, reference = _reference_record(result)
+    reference_name = _reference_display_name(reference_backend)
     print(
         f"\n[{result['case_id']}] B={shape['batch_size']} Q={shape['q_len']} "
         f"H={shape['num_qo_heads']} "
@@ -2063,14 +2436,14 @@ def _print_result(result: dict[str, Any]) -> None:
     )
     print(
         f"  Attention-TS ({ts['interface']}) {ts['median_us']:9.3f} us; "
-        f"TRTLLM-gen {trt['median_us']:9.3f} us; "
-        f"raw gap {result['attention_ts_gap_percent_vs_trtllm_gen']:+8.3f}%; "
+        f"{reference_name} {reference['median_us']:9.3f} us; "
+        f"raw gap {result['attention_ts_gap_percent_vs_reference']:+8.3f}%; "
         f"balanced total gap {_balanced_gap_percent(result):+8.3f}%"
     )
     paired = result["paired_two_order_cycles"]
     print(
-        f"  paired means TS/TRT={ts['arithmetic_mean_us']:.3f}/"
-        f"{trt['arithmetic_mean_us']:.3f} us; cycle gap median/p95="
+        f"  paired means TS/reference={ts['arithmetic_mean_us']:.3f}/"
+        f"{reference['arithmetic_mean_us']:.3f} us; cycle gap median/p95="
         f"{paired['cycle_gap_percent_median']:+.3f}/"
         f"{paired['cycle_gap_percent_p95']:+.3f}%"
     )
@@ -2081,8 +2454,8 @@ def _print_result(result: dict[str, Any]) -> None:
     )
     print(f"  TS policy: {ts['policy']}")
     print(
-        f"  correctness max abs TS/TRT={ts['max_abs_error']:.6g}/"
-        f"{trt['max_abs_error']:.6g}; backend diff="
+        f"  correctness max abs TS/reference={ts['max_abs_error']:.6g}/"
+        f"{reference['max_abs_error']:.6g}; backend diff="
         f"{result['backend_max_abs_difference']:.6g}"
     )
 
@@ -2117,7 +2490,7 @@ def _load_runtime() -> dict[str, Any]:
         "wrapper_type": BatchMLADecodePagedTSWrapper,
         "standalone_ts_decode": prims_ts_batch_decode_with_kv_cache_mla,
         "get_ts_workspace_size": get_prims_ts_batch_decode_mla_workspace_size,
-        "trtllm_decode": trtllm_batch_decode_with_kv_cache_mla,
+        "reference_decode": trtllm_batch_decode_with_kv_cache_mla,
         "get_device_sm_count": get_device_sm_count,
         "get_trtllm_counter_bytes": get_trtllm_gen_multi_ctas_kv_counter_bytes,
         "make_case": make_attention_ts_mla_decode_case,
@@ -2129,11 +2502,15 @@ def _load_runtime() -> dict[str, Any]:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
+    args.reference_backend = _reference_backend_for_suite(args.suite)
+    args.timing_cache_mode = _timing_cache_mode_for_suite(args.suite)
     args.effective_command = effective_command(Path(__file__), argv)
     if args.q_len <= 0:
         parser.error("--q-len must be positive")
+    if args.suite != "signoff" and args.q_len != _Q_LEN:
+        parser.error("--q-len applies only to --suite signoff")
     if args.list_cases:
-        for spec in _full_matrix(args.q_len):
+        for spec in _catalog(args.suite, args.q_len):
             print(spec.case_id)
         return 0
     if args.resume is not None:
@@ -2167,15 +2544,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"device {args.device} is {device_name} with capability {capability}"
         )
 
-    cold_l2_scrubber = _prepare_cold_l2_scrubber(torch, args.device)
-    args.cold_l2_scrub_contract = cold_l2_scrubber.metadata()
+    cold_l2_scrubber = None
+    args.cold_l2_scrub_contract = None
+    if args.timing_cache_mode == "cold-l2":
+        cold_l2_scrubber = _prepare_cold_l2_scrubber(torch, args.device)
+        args.cold_l2_scrub_contract = cold_l2_scrubber.metadata()
     runtime["clear_cache"]()
-    provenance = _collect_provenance(args, runtime)
+    provenance = _collect_provenance(args, runtime, specs)
     signature = _run_signature(specs, args, provenance)
     source_session_sha256 = signature["source_session_sha256"]
     case_contracts = {
         spec.case_id: _case_contract_record(
-            spec, source_session_sha256, args.prims_ts_interface
+            spec,
+            source_session_sha256,
+            args.prims_ts_interface,
+            args.reference_backend,
         )
         for spec in specs
     }
@@ -2186,12 +2569,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     print(json.dumps(provenance, indent=2))
     print(
-        "\nCorrectness precedes and follows paired cold-L2 graph timing. "
+        "\nCorrectness precedes and follows paired graph timing. "
         f"Selected rows: {len(specs)}; resumed rows: {len(completed)}; "
-        f"PrimTS interface: {args.prims_ts_interface}."
+        f"PrimTS interface: {args.prims_ts_interface}; reference: "
+        f"{args.reference_backend}; cache mode: {args.timing_cache_mode}."
     )
 
     results_by_id = dict(completed)
+    completed_compile_reuse_groups = {
+        spec.compile_reuse_group
+        for spec in specs
+        if spec.case_id in completed
+        and spec.compile_reuse_group is not None
+        and completed[spec.case_id].get("status") == "ok"
+    }
     payload = {
         "schema_version": _SCHEMA_VERSION,
         "status": "running",
@@ -2235,6 +2626,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             continue
         try:
             result = _run_case(spec, args, runtime, cold_l2_scrubber)
+            _validate_compile_reuse(
+                spec,
+                result,
+                completed_compile_reuse_groups,
+            )
         except Exception as error:
             if not args.continue_on_error:
                 payload["status"] = "error"
@@ -2246,6 +2642,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 error,
                 args.prims_ts_interface,
                 args.gap_threshold,
+                args.reference_backend,
             )
         result["source_session_sha256"] = source_session_sha256
         result["case_contract"] = case_contracts[spec.case_id]["contract"]

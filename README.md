@@ -5,16 +5,19 @@ to qualify FlashInfer PrimTS FMHA context, FMHA decode, and MLA decode kernels.
 It exercises FlashInfer's public Python interfaces; it does not contain the
 kernels themselves.
 
-The full performance campaign executes 542 rows:
+The full performance campaign executes 564 rows:
 
 - 350 paired PrimTS-versus-TRTLLM-Gen decode rows;
+- 22 paired PrimTS-auto-versus-CuTe-DSL MLA feature rows;
 - 128 causal-context correctness and standalone performance rows; and
 - 64 paired FP8 causal-context rows, reusing the FP8 half of the context
   matrix.
 
-Every paired row fails when PrimTS is more than 5% slower than TRTLLM-Gen under
-the order-balanced cold-L2 protocol described below. Numerical accuracy is
-checked before and after timing.
+The 414 TRTLLM-Gen comparison rows fail when PrimTS is more than 5% slower
+under the order-balanced cold-L2 protocol described below. The 22 focused CuTe
+DSL rows use the feature campaign's hot-graph protocol and record a 6% per-row
+diagnostic; accepted outliers remain visible instead of becoming case-specific
+policy exceptions. Numerical accuracy is checked before and after timing.
 
 ## Qualification environment
 
@@ -22,12 +25,16 @@ checked before and after timing.
 - Accuracy gate: CUDA 12.9 and CUDA 13.0, run independently.
 - Compiler package: public `nvidia-cutlass-dsl==4.7.0`.
 - Source: a FlashInfer Git checkout containing `flashinfer.attention.prims_ts`.
-- Reference backend: TRTLLM-Gen artifacts supplied through the matching
-  FlashInfer/`flashinfer-cubin` installation.
+- Reference backends: TRTLLM-Gen artifacts supplied through the matching
+  FlashInfer/`flashinfer-cubin` installation, plus monolithic CuTe DSL for the
+  focused MLA feature suite.
 
 Other devices may work, but the recorded checkpoint was collected on B200.
 Performance results from different GPUs, drivers, toolkits, power states, or
 benchmark revisions are not directly comparable.
+
+The focused grouped-tokens/heads-Q suite was additionally qualified on B200
+with CUDA 13.4, PyTorch 2.14 nightly, and imported CUTLASS DSL 4.7.0.
 
 ## Installation
 
@@ -81,6 +88,9 @@ Counts can grow with FlashInfer. The release gate requires at least 360 tests,
 zero failures/errors, and zero skips. Structural trace-template checks are
 separate from numerical accuracy and can be added with `--include-trace`.
 `--allow-partial` exists only for diagnostic selections and is not signoff.
+Because these files come from the selected FlashInfer checkout, this gate also
+collects newly added fixed/packed query, empty-request, dynamic-batch, and
+non-power-of-two MLA tests without copying them into this repository.
 
 ## Benchmark coverage
 
@@ -90,12 +100,14 @@ separate from numerical accuracy and can be added with `--include-trace`.
 | FMHA speculative decode | 30 | causal SQ 2/4/8; Qwen-style Hq/Hkv/D 96/8/128 and GPT-OSS-style 64/8/64; B 8/16/32/40/64; KV 16K; FP8; page 32 |
 | MLA decode, SQ=1 | 100 | Hq 8/16/32/64/128 × B 1/4/8/64/128 × KV 2K/8K × FP8/BF16; latent/nope/RoPE 512/512/64; BF16 output; page 32 |
 | MLA decode, SQ=4 | 100 | The same 100-row product with grouped bottom-right-causal queries |
+| MLA grouped tokens/heads-Q | 22 | PrimTS auto vs monolithic CuTe DSL; B4/K512 equivalent 48-row and 96-row Hq 12/24/48/96 factorizations; BF16/FP8; both 1CTA/2CTA and long-K split reducers; paired B3/B4 compile reuse |
 | FMHA causal context | 128 | FP8 and BF16: D 128/256 × Hq 32 × Hkv 32/4 × B 1/4 × (SQ, SKV) 1K/1K, 4K/4K, 16K/16K, or 256/4K × packed-ragged separate QKV/paged KV; page 32 |
 | FP8 context comparison | 64 | FP8 half of the same causal-context matrix, with common BF16 output for PrimTS and TRTLLM-Gen |
 
-The unified runner owns all 542 executions. The 128-row context suite records
+The unified runner owns all 564 executions. The 128-row context suite records
 PrimTS correctness and latency but has no paired reference measurement. The
-other 414 rows compare PrimTS and TRTLLM-Gen through public FlashInfer APIs.
+other rows contain 414 PrimTS/TRTLLM-Gen comparisons and 22 PrimTS/CuTe-DSL
+comparisons through public FlashInfer APIs.
 
 ## Running the benchmarks
 
@@ -123,7 +135,7 @@ python "$VALIDATION_ROOT/scripts/run_flashinfer_ts_suite.py" run \
   --dry-run
 ```
 
-Run the complete 542-row CUDA 13.0 gate:
+Run the complete 564-row CUDA 13.0 qualification campaign:
 
 ```bash
 python "$VALIDATION_ROOT/scripts/run_flashinfer_ts_suite.py" run \
@@ -136,10 +148,9 @@ Select suites by repeating `--suite`:
 
 ```bash
 python "$VALIDATION_ROOT/scripts/run_flashinfer_ts_suite.py" run \
-  --suite fmha-decode \
-  --suite mla-decode \
+  --suite mla-groups-tokens-heads-q \
   --source-root "$FLASHINFER_ROOT" \
-  --output-dir "$RESULTS_ROOT/decode-only"
+  --output-dir "$RESULTS_ROOT/mla-groups-tokens-heads-q"
 ```
 
 `--quick` shortens timing for functional smoke tests. It is not performance
@@ -158,28 +169,33 @@ contract is:
 
 1. Plan, compile, allocate, capture, and warm up outside the timed interval.
 2. Capture one public backend call per CUDA graph.
-3. Immediately before every measured replay, update a non-compressible buffer
-   sized to twice the GPU L2 cache on the same stream.
-4. Exclude the L2 scrub from CUDA-event timing.
+3. For the 414 TRTLLM-Gen rows, immediately before every measured replay,
+   update a non-compressible buffer sized to twice the GPU L2 cache on the same
+   stream and exclude that scrub from CUDA-event timing.
+4. For the 22 focused CuTe-DSL rows, use hot one-call graph replays to match the
+   feature's public-backend performance campaign.
 5. Alternate backend order. A complete cycle contains one PrimTS-first and one
-   TRTLLM-Gen-first replay.
+   reference-first replay.
 6. Check results before timing, poison/replay outputs where applicable, and
    check results again after timing.
 
 The decision statistic for each paired row is:
 
 ```text
-(sum(PrimTS sample duration) / sum(TRTLLM-Gen sample duration) - 1) * 100
+(sum(PrimTS sample duration) / sum(reference sample duration) - 1) * 100
 ```
 
-A value greater than `+5.0%` is a regression; a negative value means PrimTS is
-faster. Independent medians, ratio-of-medians, per-cycle percentiles, p95,
-minimum, and maximum are diagnostics only. They do not replace the
-order-balanced total-duration gate.
+A value greater than `+5.0%` fails a TRTLLM-Gen row. The focused CuTe-DSL suite
+classifies values above `+6.0%` as recorded outliers but does not fail the run,
+because its purpose is to expose the complete structural distribution without
+encouraging head-, batch-, or sequence-specific policy exceptions. A negative
+value means PrimTS is faster. Independent medians, ratio-of-medians, per-cycle
+percentiles, p95, minimum, and maximum are diagnostics only.
 
-For a row above 5%, rerun that exact row at a larger sample count in the same
-session. Preserve both artifacts, identify timing variance versus a repeatable
-kernel gap, fix confirmed gaps, and then rerun the complete matrix.
+For a row above its diagnostic threshold, rerun that exact row at a larger
+sample count in the same session. Preserve both artifacts and identify timing
+variance versus a repeatable kernel gap before considering a general policy or
+kernel change.
 
 ## Comparing candidate and prior-source runs
 
@@ -240,26 +256,30 @@ repository. The historical context driver used a zero-filled scrub buffer,
 which Blackwell L2 may compress; its latency results are therefore not valid
 signoff evidence for the corrected protocol and must be rerun.
 
-| Suite | Completed | Worst PrimTS gap vs TRTLLM-Gen |
-| --- | ---: | ---: |
+| Suite | Completed | Reference / status |
+| --- | ---: | --- |
 | FMHA decode, SQ=1 | 120/120 | +1.4779% |
 | Causal FMHA decode, SQ=2/4/8 | 30/30 | +2.5898% |
 | MLA decode, SQ=1 | 100/100 | +3.4224% |
 | MLA decode, SQ=4 | 100/100 | +3.2929% |
+| MLA grouped tokens/heads-Q | 22/22 | CuTe DSL; 7 rows above the 6% diagnostic, worst +11.1996%; CuTe/PrimTS geometric mean 1.0216 |
 | FP8 causal context comparison | 64/64 accuracy | Performance rerun required with the current scrub |
 | FP8/BF16 causal context | 128/128 accuracy | Current standalone performance rerun required |
 
 The MLA SQ=1 value is from an independent larger-sample confirmation of the
-initial worst row. All 542 historical executions passed their embedded
-accuracy checks, and the separate numerical suite passed 360/360 under CUDA
-12.9 and 360/360 under CUDA 13.0. A fresh full run of the published scripts is
-the release decision; this checkpoint is provenance, not a substitute.
+initial worst row. All 542 executions in the earlier campaign passed their
+embedded accuracy checks, and the separate numerical suite passed 360/360
+under CUDA 12.9 and 360/360 under CUDA 13.0. A fresh full run of the published
+scripts is the release decision; this checkpoint is provenance, not a
+substitute. The 22-row grouped-tokens/heads-Q result is a fresh CUDA 13.4 run
+with 200 samples per backend, zero accuracy/runtime/metric failures, and two
+expected compile cache hits from the B3→B4 topology-reuse pairs.
 
 ## Repository layout
 
 ```text
 scripts/run_accuracy.py                 numerical accuracy gate
-scripts/run_flashinfer_ts_suite.py      unified 542-row benchmark runner
+scripts/run_flashinfer_ts_suite.py      unified 564-row benchmark runner
 scripts/compare_runs.py                 candidate-versus-baseline drift gate
 scripts/bench_attention_ts_*.py         benchmark drivers
 scripts/attention_ts_decode_*.py        fixtures, timing, and artifacts

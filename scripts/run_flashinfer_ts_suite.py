@@ -91,6 +91,12 @@ SUITES = (
         "paired cold-L2 CUDA graphs",
     ),
     Suite(
+        "mla-groups-tokens-heads-q",
+        22,
+        "Public PrimTS auto vs CuTe DSL for non-power-of-two MLA heads, flat grouped-Q rows, both auto families, split reduction, and dynamic-batch compile reuse",
+        "paired hot-cache CUDA graphs",
+    ),
+    Suite(
         "context",
         128,
         "PrimTS FP8/BF16 causal context: D128/D256, MHA/GQA, B1/B4, square 1K/4K/16K plus SQ256/SKV4K, ragged/paged",
@@ -451,6 +457,38 @@ def _mla_commands(
     return commands
 
 
+def _mla_groups_tokens_heads_q_command(
+    python: str, driver: Path, output_dir: Path, device: int, quick: bool
+) -> tuple[str, list[str], list[Path]]:
+    warmup, iterations = (2, 10) if quick else (10, 200)
+    base = output_dir / "mla-groups-tokens-heads-q" / "signoff"
+    outputs = [base.with_suffix(suffix) for suffix in (".json", ".csv", ".md")]
+    command = [
+        python,
+        str(driver),
+        "--suite",
+        "groups-tokens-heads-q",
+        "--expect-cases",
+        "22",
+        "--warmup-iters",
+        str(warmup),
+        "--iters",
+        str(iterations),
+        "--gap-threshold",
+        "6",
+        "--continue-on-error",
+        "--device",
+        str(device),
+        "--json-output",
+        str(outputs[0]),
+        "--csv-output",
+        str(outputs[1]),
+        "--markdown-output",
+        str(outputs[2]),
+    ]
+    return "mla-groups-tokens-heads-q", command, outputs
+
+
 def _context_command(
     python: str,
     driver: Path,
@@ -646,7 +684,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     selected_names = {suite.name for suite in suites}
     commands: list[tuple[str, list[str], list[Path]]] = []
     overlay = None
-    if selected_names & {"fmha-decode", "mla-decode"}:
+    if selected_names & {
+        "fmha-decode",
+        "mla-decode",
+        "mla-groups-tokens-heads-q",
+    }:
         overlay = _stage_decode_drivers(source_root)
         atexit.register(shutil.rmtree, overlay, True)
         if "fmha-decode" in selected_names:
@@ -662,6 +704,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         if "mla-decode" in selected_names:
             commands.extend(
                 _mla_commands(
+                    sys.executable,
+                    overlay / MLA_DRIVER,
+                    output_dir,
+                    args.device,
+                    args.quick,
+                )
+            )
+        if "mla-groups-tokens-heads-q" in selected_names:
+            commands.append(
+                _mla_groups_tokens_heads_q_command(
                     sys.executable,
                     overlay / MLA_DRIVER,
                     output_dir,

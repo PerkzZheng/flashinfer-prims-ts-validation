@@ -25,6 +25,8 @@ from .bench_attention_ts_decode import (
 )
 from .bench_attention_ts_mla_decode import (
     MLAPerformanceCaseSpec,
+    _groups_tokens_heads_q_matrix,
+    _validate_compile_reuse,
 )
 from .bench_attention_ts_mla_decode import (
     _balanced_gap_percent as _mla_balanced_gap_percent,
@@ -129,6 +131,7 @@ def _valid_mla_resume_row() -> tuple[dict[str, Any], dict[str, Any]]:
         },
         "attention_ts": {"interface": "wrapper"},
         "trtllm_gen": {
+            "backend": "trtllm-gen",
             "enable_pdl": False,
             "internal_shape_auto_selector": True,
         },
@@ -158,6 +161,64 @@ def test_mla_resume_rejects_legacy_median_gate_and_corrupt_raw_samples() -> None
     corrupt["paired_two_order_cycles"]["raw_samples_ms"]["attention_ts"].pop()
     with pytest.raises(ValueError, match="raw samples"):
         _validate_mla_row_case_contract(corrupt, expected)
+
+
+def test_mla_groups_tokens_heads_q_catalog_is_focused_and_unique() -> None:
+    specs = _groups_tokens_heads_q_matrix()
+
+    assert len(specs) == 22
+    assert len({spec.case_id for spec in specs}) == len(specs)
+    assert {spec.num_heads for spec in specs} == {12, 24, 48, 96}
+    assert {spec.dtype_name for spec in specs} == {"bf16", "fp8"}
+    assert {spec.num_heads * spec.seq_len_q for spec in specs} >= {12, 48, 96}
+    assert all(((spec.max_seq_len + 31) // 32) % 4 == 0 for spec in specs)
+
+    split_anchors = [spec for spec in specs if spec.max_seq_len == 32896]
+    assert {(spec.num_heads, spec.seq_len_q) for spec in split_anchors} == {
+        (12, 1),
+        (96, 1),
+    }
+    assert {spec.dtype_name for spec in split_anchors} == {"bf16", "fp8"}
+
+    reuse_groups: dict[str, list[MLAPerformanceCaseSpec]] = {}
+    for spec in specs:
+        if spec.compile_reuse_group is not None:
+            reuse_groups.setdefault(spec.compile_reuse_group, []).append(spec)
+    assert len(reuse_groups) == 2
+    for group in reuse_groups.values():
+        assert [spec.batch_size for spec in group] == [3, 4]
+        assert (
+            len({(spec.num_heads, spec.seq_len_q, spec.max_seq_len) for spec in group})
+            == 1
+        )
+
+
+def test_mla_compile_reuse_gate_applies_only_after_group_anchor() -> None:
+    first, second = [
+        spec
+        for spec in _groups_tokens_heads_q_matrix()
+        if spec.compile_reuse_group == "bf16-h12-q1-kv1024"
+    ]
+    completed: set[str] = set()
+    compiled = {
+        "status": "ok",
+        "attention_ts": {
+            "compiled_during_setup": True,
+            "compiled_on_first_call": False,
+        },
+    }
+    reused = {
+        "status": "ok",
+        "attention_ts": {
+            "compiled_during_setup": False,
+            "compiled_on_first_call": False,
+        },
+    }
+
+    _validate_compile_reuse(first, compiled, completed)
+    _validate_compile_reuse(second, reused, completed)
+    with pytest.raises(AssertionError, match="batch-only topology change recompiled"):
+        _validate_compile_reuse(second, compiled, completed)
 
 
 def test_unpaired_disposition_is_explicitly_raw_only() -> None:

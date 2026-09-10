@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "suite_id": "qsa-q5-bf16-real-topk-v1",
+  "model_len": 131072,
+  "description": "TP2 BF16 Q5/MTP4 grouped-route proxy at 16/32 groups; one shared request/cache, not disjoint-cache production batch inference.",
+  "timing": {
+    "cuda_graph": true,
+    "cold_l2": true,
+    "minimum_eviction_bytes": 268435456,
+    "warmup_iterations": 20,
+    "measured_iterations": 300,
+    "backend_order": "rotating_and_periodically_reversed",
+    "primary_statistic": "mean_cuda_event_us",
+    "prims_ts_combined_components": [
+      "qsa_metadata",
+      "attention",
+      "split_kv_reduction_if_resolved"
+    ],
+    "triton_combined_components": [
+      "expand_indices",
+      "sparse_paged_attention",
+      "split_kv_reduction_if_resolved"
+    ],
+    "l2_eviction_pattern": "seeded-random-uint8-add-one-v1",
+    "l2_eviction_scope": "before-whole-graph-not-between-kernels"
+  },
+  "geometry": {
+    "context_length": 8192,
+    "dtype": "bf16",
+    "output_dtype": "bf16",
+    "head_dim": 256,
+    "total_query_heads": 24,
+    "total_kv_heads": 2,
+    "tp_sizes": [
+      2
+    ],
+    "group_counts": [
+      16,
+      32
+    ],
+    "query_group_size": 5,
+    "sparse_block_size": 4,
+    "token_topk": 2048,
+    "first_logical_position": 4107,
+    "query_layout": "fixed_grouped"
+  },
+  "topk_source": {
+    "format": "expanded_tokens_v1",
+    "files": [
+      "qsa_bench/real_topk_job642187/qwen38-8k-bf16-mtp3-rank0.pt"
+    ],
+    "sha256": [
+      "3a6aefdcfa85247923cd9dcc74179a98078684f6a5a27ba59701a835b4cd9f0b"
+    ],
+    "selected_token_indices_shape": [
+      8192,
+      2051
+    ],
+    "storage_page_size": 1600,
+    "provenance": "real vLLM layer route capture; consecutive saturated rows are grouped into Q5 routes"
+  },
+  "cases": [
+    {
+      "case_id": "q5-tp2-bs16-bf16",
+      "phase": "grouped_decode_proxy",
+      "tp": 2,
+      "batch_size": 16,
+      "query_group_size": 5,
+      "dtype": "bf16"
+    },
+    {
+      "case_id": "q5-tp2-bs32-bf16",
+      "phase": "grouped_decode_proxy",
+      "tp": 2,
+      "batch_size": 32,
+      "query_group_size": 5,
+      "dtype": "bf16"
+    }
+  ],
+  "matrix": {
+    "total_cases": 2
+  }
+}

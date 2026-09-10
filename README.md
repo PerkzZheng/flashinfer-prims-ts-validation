@@ -5,6 +5,8 @@ to qualify FlashInfer PrimTS FMHA context, FMHA decode, and MLA decode kernels.
 It exercises FlashInfer's public Python interfaces; it does not contain the
 kernels themselves.
 
+The two [QToken-KvBlock-Sparse-Attention suites](docs/sparse_attention.md) add a separate PrimTS-versus-vLLM-Triton workflow: TP2 BF16 Q5 at 16/32 route groups, and a 54-case BF16/FP8 prefill/decode matrix at 8K/16K/32K. Optional G4 prefill controls allow comparison with suggested G5. These sparse suites require externally supplied recorded top-k routes and a compatible vLLM checkout; they are not included in the 564-row dense/MLA total below.
+
 The full performance campaign executes 564 rows:
 
 - 350 paired PrimTS-versus-TRTLLM-Gen decode rows;
@@ -284,6 +286,10 @@ scripts/compare_runs.py                 candidate-versus-baseline drift gate
 scripts/bench_attention_ts_*.py         benchmark drivers
 scripts/attention_ts_decode_*.py        fixtures, timing, and artifacts
 scripts/*_cpu_checks.py                 CPU-only metric-contract tests
+scripts/run_sparse_attention_suite.py   two TP2 sparse suites and optional G4 controls
+scripts/summarize_sparse_attention.py   absolute pipeline/component tables
+suites/sparse_attention/*.json          recorded sparse workload/trace manifests
+docs/sparse_attention.md                sparse setup, methodology, and caveats
 ```
 
 ## License

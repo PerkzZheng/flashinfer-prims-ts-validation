@@ -2,6 +2,13 @@ FlashInfer PrimTS validation suite
 
 This product includes benchmark code derived from FlashInfer.
 
+The sparse-attention benchmark driver and manifest helpers are derived from
+PerkzZheng/vllm at b10972e13c51d0ba61906e64e9b01b87bd6a0549:
+benchmarks/kernels/benchmark_q_token_kv_block_sparse_ts_suites.py.
+Copyright contributors to the vLLM project. Licensed under Apache-2.0.
+The port adds standalone source/trace selection, path-redacted provenance,
+CPU-only suite controls, and non-compressible L2 eviction.
+
 FlashInfer
 Copyright 2025-2026 NVIDIA
 Copyright 2023-2026 FlashInfer community (https://flashinfer.ai/)

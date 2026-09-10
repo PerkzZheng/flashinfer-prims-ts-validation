@@ -12,3 +12,7 @@ attention-ts-results/
 *.xml
 .context-*-isolated-shards/
 flashinfer-prims-ts-*/
+
+# Recorded sparse routes are external inputs, never benchmark source.
+*.pt
+*.pth

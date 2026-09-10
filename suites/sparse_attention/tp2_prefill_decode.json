@@ -1,0 +1,161 @@
+{
+  "schema_version": 1,
+  "suite_id": "qsa-tp2-real-topk-prefill-decode-v1",
+  "model_len": 131072,
+  "description": "TP2 production-shape standalone QSA pipeline comparison across prefill, decode, BF16, and FP8.",
+  "timing": {
+    "cuda_graph": true,
+    "cold_l2": true,
+    "minimum_eviction_bytes": 268435456,
+    "warmup_iterations": 20,
+    "measured_iterations": 300,
+    "backend_order": "rotating_and_periodically_reversed",
+    "primary_statistic": "mean_cuda_event_us",
+    "also_record": [
+      "raw_samples",
+      "median_us",
+      "p95_us",
+      "coefficient_of_variation"
+    ],
+    "prims_ts_combined_components": [
+      "qsa_metadata",
+      "attention",
+      "split_kv_reduction_if_resolved"
+    ],
+    "triton_combined_components": [
+      "expand_indices",
+      "sparse_paged_attention",
+      "split_kv_reduction_if_resolved"
+    ],
+    "excluded_from_timing": [
+      "allocation",
+      "jit_compilation",
+      "plan_construction",
+      "validation",
+      "shape_resolution",
+      "cuda_graph_capture"
+    ],
+    "l2_eviction_pattern": "seeded-random-uint8-add-one-v1",
+    "l2_eviction_scope": "before-whole-graph-not-between-kernels"
+  },
+  "geometry": {
+    "tp": 2,
+    "total_query_heads": 24,
+    "total_kv_heads": 2,
+    "local_query_heads": 12,
+    "local_kv_heads": 1,
+    "head_dim": 256,
+    "sparse_block_size": 4,
+    "token_topk": 2048,
+    "output_dtype": "bf16",
+    "qkv_dtypes": [
+      "bf16",
+      "fp8_e4m3"
+    ]
+  },
+  "topk_source": {
+    "format": "compact_blocks_v1",
+    "capture_vllm_commit": "c9406ea",
+    "capture_tp": 4,
+    "replay_tp": 2,
+    "capture_layer": 3,
+    "shared_across_qkv_dtypes": true,
+    "reason_for_cross_tp_and_dtype_replay": "QSA routes are tokenwise rather than headwise. Replaying the same logical block IDs at TP2 is valid, and using identical route topology isolates BF16 versus FP8 kernel behavior.",
+    "storage_page_size": 784,
+    "trace_sets": {
+      "8192": [
+        "longbench_topk_campaign/dumps/lbv2_08192_s0_66f91f2cbb02136c067c4b1e/qsa_topk_layer03_call0000_rank0.pt",
+        "longbench_topk_campaign/dumps/lbv2_08192_s0_66f91f2cbb02136c067c4b1e/qsa_topk_layer03_call0001_rank0.pt"
+      ],
+      "16384": [
+        "longbench_topk_campaign/dumps/lbv2_16384_s0_66f55828821e116aacb3363e/qsa_topk_layer03_call0004_rank0.pt",
+        "longbench_topk_campaign/dumps/lbv2_16384_s0_66f55828821e116aacb3363e/qsa_topk_layer03_call0005_rank0.pt",
+        "longbench_topk_campaign/dumps/lbv2_16384_s0_66f55828821e116aacb3363e/qsa_topk_layer03_call0006_rank0.pt"
+      ],
+      "32768": [
+        "longbench_topk_campaign/dumps/lbv2_32768_s0_66f40e44821e116aacb30b45/qsa_topk_layer03_call0010_rank0.pt",
+        "longbench_topk_campaign/dumps/lbv2_32768_s0_66f40e44821e116aacb30b45/qsa_topk_layer03_call0011_rank0.pt",
+        "longbench_topk_campaign/dumps/lbv2_32768_s0_66f40e44821e116aacb30b45/qsa_topk_layer03_call0012_rank0.pt",
+        "longbench_topk_campaign/dumps/lbv2_32768_s0_66f40e44821e116aacb30b45/qsa_topk_layer03_call0013_rank0.pt",
+        "longbench_topk_campaign/dumps/lbv2_32768_s0_66f40e44821e116aacb30b45/qsa_topk_layer03_call0014_rank0.pt",
+        "longbench_topk_campaign/dumps/lbv2_32768_s0_66f40e44821e116aacb30b45/qsa_topk_layer03_call0015_rank0.pt"
+      ]
+    },
+    "trace_sha256": {
+      "longbench_topk_campaign/dumps/lbv2_08192_s0_66f91f2cbb02136c067c4b1e/qsa_topk_layer03_call0000_rank0.pt": "e1251dd17fc04ac47e36c68ece6e8abba23923c326119282ab94c78e84aa87d2",
+      "longbench_topk_campaign/dumps/lbv2_08192_s0_66f91f2cbb02136c067c4b1e/qsa_topk_layer03_call0001_rank0.pt": "774addcb22ebc7c505f40f4139f5393a9e779b52a485afec98b4b531b7e8ee4f",
+      "longbench_topk_campaign/dumps/lbv2_16384_s0_66f55828821e116aacb3363e/qsa_topk_layer03_call0004_rank0.pt": "a7977179da646d948c992bbf8030872f65521e2ad486c5c8e723f1cd8707e9d4",
+      "longbench_topk_campaign/dumps/lbv2_16384_s0_66f55828821e116aacb3363e/qsa_topk_layer03_call0005_rank0.pt": "72c19f6282733a60b158ad7ae09e5ed5f112b33b6108feeda4239c687881bc9e",
+      "longbench_topk_campaign/dumps/lbv2_16384_s0_66f55828821e116aacb3363e/qsa_topk_layer03_call0006_rank0.pt": "9de47455e3278b9c24337013a12a22696160a55cd17c2cd8bbc4c07545ed9276",
+      "longbench_topk_campaign/dumps/lbv2_32768_s0_66f40e44821e116aacb30b45/qsa_topk_layer03_call0010_rank0.pt": "b6c94c170cbe76e7df947cc40ad11ce09acb7f35aa558722c632bfd56e2d243a",
+      "longbench_topk_campaign/dumps/lbv2_32768_s0_66f40e44821e116aacb30b45/qsa_topk_layer03_call0011_rank0.pt": "b5e4a593acf4d6a05f5f7a05a9bca61ef9055a47a73e61702bf743cfb44477aa",
+      "longbench_topk_campaign/dumps/lbv2_32768_s0_66f40e44821e116aacb30b45/qsa_topk_layer03_call0012_rank0.pt": "81cc2cc1a6b49dfff46aa4c9de7b7dba45184b78ea3a945cf508c58d4862a147",
+      "longbench_topk_campaign/dumps/lbv2_32768_s0_66f40e44821e116aacb30b45/qsa_topk_layer03_call0013_rank0.pt": "63791e492aa343a5b4f08ab9bcfeb10318e23a4ad3dde1fec5f1275407ab0b65",
+      "longbench_topk_campaign/dumps/lbv2_32768_s0_66f40e44821e116aacb30b45/qsa_topk_layer03_call0014_rank0.pt": "ababf3466e435cca294c8d5725360d2f27b208e1d4c8ef924d896a13e57a59ff",
+      "longbench_topk_campaign/dumps/lbv2_32768_s0_66f40e44821e116aacb30b45/qsa_topk_layer03_call0015_rank0.pt": "bb2be66dfe04f8126a469cfc489213d0a08f1dea06c09750a22fbc4f2af740dc"
+    },
+    "prefill_replay": "Concatenate every chunk in the selected length's trace set and preserve all logical positions.",
+    "decode_replay": "Take the final G consecutive rows from the selected length's trace set. Replicate this real route group to batch size B while assigning every request a disjoint physical K/V cache and block-table row.",
+    "fp8_note": "The captured indices came from the BF16 model run; the same indices are intentionally reused for FP8 timing. Add dtype-specific trace overrides later if indexer-distribution sensitivity is being studied."
+  },
+  "workloads": {
+    "prefill": {
+      "batch_sizes": [
+        1
+      ],
+      "query_lengths": [
+        8192,
+        16384,
+        32768
+      ],
+      "kv_lengths": [
+        8192,
+        16384,
+        32768
+      ],
+      "length_pairing": "query_length_equals_kv_length",
+      "query_group_size": 4,
+      "query_layout": "packed",
+      "causal": true
+    },
+    "decode": {
+      "batch_sizes": [
+        1,
+        8,
+        64,
+        256
+      ],
+      "kv_lengths": [
+        8192,
+        16384,
+        32768
+      ],
+      "mtp_to_query_group_size": {
+        "0": 1,
+        "3": 4
+      },
+      "query_layout": "fixed_unpacked_[B,num_groups,G,Hq,D]",
+      "num_groups": 1,
+      "causal": true,
+      "position_rule": "The G queries occupy the final G logical positions and the final query sees kv_length tokens."
+    }
+  },
+  "matrix": {
+    "prefill_cases": 6,
+    "decode_cases": 48,
+    "total_cases": 54,
+    "split_kv_policy": "FlashInfer production policy after optional suggested G; record actual G and splits. The default launcher enables automatic grouping; the prefill-g4 control disables it."
+  },
+  "correctness": {
+    "bf16_rtol": 0.02,
+    "bf16_atol": 0.02,
+    "fp8_rtol": 0.05,
+    "fp8_atol": 0.05,
+    "required_statistics": [
+      "max_abs",
+      "mean_abs",
+      "rmse"
+    ],
+    "split_kv_oracle": "sampled FP32 reference rows"
+  }
+}

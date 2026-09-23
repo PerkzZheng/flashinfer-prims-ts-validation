@@ -2,6 +2,11 @@ FlashInfer PrimTS validation suite
 
 This product includes benchmark code derived from FlashInfer.
 
+The native sparse MLA benchmark and cold-L2 CUDA Graph timer are adapted from
+the validation campaign for FlashInfer PR #5434 (implementation 8ac751ee).
+Preparation and FP64 reference helpers are loaded from the selected FlashInfer
+checkout. The preparation helper credits the vLLM project under Apache-2.0.
+
 The sparse-attention benchmark driver and manifest helpers are derived from
 PerkzZheng/vllm at b10972e13c51d0ba61906e64e9b01b87bd6a0549:
 benchmarks/kernels/benchmark_q_token_kv_block_sparse_ts_suites.py.

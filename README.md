@@ -5,6 +5,8 @@ to qualify FlashInfer PrimTS FMHA context, FMHA decode, and MLA decode kernels.
 It exercises FlashInfer's public Python interfaces; it does not contain the
 kernels themselves.
 
+The [native sparse MLA suite](docs/sparse_mla.md) adds 480 BF16/E4M3 prefill/decode cases against TRTLLM-Gen, using identical FlashMLA-style random top-k inputs and cold-4×L2 CUDA Graph timing. It supports SWA plus compressed KV, HCA and no-SWA controls, and requires the FlashInfer sparse MLA implementation in PR #5434. This separate GB300 suite is not included in the 564-row total below.
+
 The two [QToken-KvBlock-Sparse-Attention suites](docs/sparse_attention.md) add a separate PrimTS-versus-vLLM-Triton workflow: TP2 BF16 Q5 at 16/32 route groups, and a 54-case BF16/FP8 prefill/decode matrix at 8K/16K/32K. Optional G4 prefill controls allow comparison with suggested G5. These sparse suites require externally supplied recorded top-k routes and a compatible vLLM checkout; they are not included in the 564-row dense/MLA total below.
 
 The full performance campaign executes 564 rows:
@@ -290,6 +292,8 @@ scripts/run_sparse_attention_suite.py   two TP2 sparse suites and optional G4 co
 scripts/summarize_sparse_attention.py   absolute pipeline/component tables
 suites/sparse_attention/*.json          recorded sparse workload/trace manifests
 docs/sparse_attention.md                sparse setup, methodology, and caveats
+scripts/bench_attention_ts_sparse_mla.py native sparse MLA: 480 cases and subsets
+docs/sparse_mla.md                      sparse MLA inputs, timing, and reproduction
 ```
 
 ## License

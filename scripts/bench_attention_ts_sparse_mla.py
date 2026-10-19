@@ -193,8 +193,6 @@ def make_backend(name, f, helpers, *, no_swa=False):
             extra_kv_cache=extra,
             extra_indices=None if no_swa else f.ci,
             extra_lengths=None if no_swa else f.cl,
-            sinks=f.sinks,
-            softmax_scale=f.softmax_scale,
         )
 
         def run():
@@ -387,7 +385,7 @@ def load_helpers(source_root):
 
     if Path(flashinfer.__file__).resolve().parent != source_root / "flashinfer":
         raise RuntimeError("FlashInfer did not import from --source-root")
-    path = source_root / "tests/attention/test_prims_ts_sparse_mla.py"
+    path = source_root / "tests/attention/test_attention_ts_sparse_mla.py"
     spec = importlib.util.spec_from_file_location("sparse_mla_validation_helpers", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -419,7 +417,7 @@ def provenance(source_root):
         "driver": Path(__file__),
         "timing": scripts / "attention_ts_sparse_mla_timing.py",
         "preparer_reference": source_root
-        / "tests/attention/test_prims_ts_sparse_mla.py",
+        / "tests/attention/test_attention_ts_sparse_mla.py",
     }
     return dict(
         source_revision=git("rev-parse", "HEAD"),
@@ -489,9 +487,11 @@ def main(argv=None):
     if args.source_root is None:
         parser.error("--source-root is required for GPU execution")
     args.source_root = args.source_root.resolve()
-    if not (args.source_root / "tests/attention/test_prims_ts_sparse_mla.py").is_file():
+    if not (
+        args.source_root / "tests/attention/test_attention_ts_sparse_mla.py"
+    ).is_file():
         parser.error(
-            "source checkout must contain tests/attention/test_prims_ts_sparse_mla.py"
+            "source checkout must contain tests/attention/test_attention_ts_sparse_mla.py"
         )
     if args.raw_kv_tokens < max(c["queries"] for c in matrix) + 127:
         parser.error("raw context must cover queries and their preceding SWA window")

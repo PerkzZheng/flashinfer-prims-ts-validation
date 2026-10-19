@@ -4,9 +4,11 @@ Compare Prims-TS sparse MLA with FlashInfer's TRTLLM-Gen DSV4 backend on the sam
 
 ## Setup
 
-Use a FlashInfer source checkout containing [PR #5434](https://github.com/flashinfer-ai/flashinfer/pull/5434). The implementation used for the published results is `8ac751ee6a09d8a349a136192dc1ca48d848ac6d` in [PerkzZheng/flashinfer](https://github.com/PerkzZheng/flashinfer/tree/feat/prims-ts-sparse-mla). Install/build that checkout following FlashInfer's instructions, including its matching TRTLLM-Gen artifacts. An older wheel without this API is insufficient.
+Use a FlashInfer source checkout containing [PR #5434](https://github.com/flashinfer-ai/flashinfer/pull/5434) at `116e4f884aaccf19ed89c7d9a5504224f6d7be59` or newer in [PerkzZheng/flashinfer](https://github.com/PerkzZheng/flashinfer/tree/feat/prims-ts-sparse-mla). Install/build that checkout following FlashInfer's instructions, including its matching TRTLLM-Gen artifacts. This driver uses the simplified separate-source metadata API; historical published results used `8ac751ee6a09d8a349a136192dc1ca48d848ac6d`. An older wheel/helper ABI is insufficient.
 
-The qualification environment is GB300 (SM103, 152 SMs), CUDA 13.0, PyTorch 2.8.0a0 from the 25.08 NVIDIA PyTorch image, and `nvidia-cutlass-dsl==4.7.0`. The runner accepts SM100/SM103; the published sparse results qualify SM103 only. It also needs Triton, pytest, and `cuda-python` with `cuda.bindings.runtime`. It does not install dependencies or allocate GPUs.
+The published full-matrix qualification used GB300 (SM103, 152 SMs), CUDA 13.0, PyTorch 2.8.0a0 from the 25.08 NVIDIA PyTorch image, and `nvidia-cutlass-dsl==4.7.0`. The separate-source API update was checked on seven selected mixed-source/no-SWA cases with GB300, PyTorch 26.08, CUDA 13.4 and DSL 4.7.0; this was not another full-matrix run.
+
+The runner accepts SM100/SM103; these results qualify SM103 only. It also needs Triton, pytest, and `cuda-python` with `cuda.bindings.runtime`. It does not install dependencies or allocate GPUs.
 
 ```bash
 export FLASHINFER_ROOT=/path/to/flashinfer
@@ -36,7 +38,7 @@ python "$VALIDATION_ROOT/scripts/bench_attention_ts_sparse_mla.py" \
   --indices 242,243 --output results/sparse-mla-no-swa.json
 ```
 
-The runner imports the preparation and FP64 reference helpers directly from `tests/attention/test_prims_ts_sparse_mla.py` in `--source-root`. This preserves the reviewed preparation and accuracy contract without a second copy. It verifies the FlashInfer import location and records the helper hash. A future incompatible helper/API change requires updating this driver.
+The runner imports the preparation and FP64 reference helpers directly from `tests/attention/test_attention_ts_sparse_mla.py` in `--source-root`. This preserves the reviewed preparation and accuracy contract without a second copy. It verifies the FlashInfer import location and records the helper hash. The current driver uses separate source indices/lengths; scales and sinks are run inputs. Historical result pins below predate this interface cleanup.
 
 ## Cases and inputs
 

@@ -184,7 +184,7 @@ def make_backend(name, f, helpers, *, no_swa=False):
             assume_valid_prefix=True,
         )
         primary, extra = (f.compressed, None) if no_swa else (f.swa, f.compressed)
-        metadata = helpers.prepare_sparse_mla_metadata(
+        metadata = helpers.prepare_sparse_mla_indices(
             w,
             q,
             primary,
@@ -199,8 +199,8 @@ def make_backend(name, f, helpers, *, no_swa=False):
             return w.run(
                 q,
                 primary,
-                metadata,
-                extra,
+                **metadata,
+                extra_kv_cache=extra,
                 out=out,
                 validate=False,
                 sinks=f.sinks,

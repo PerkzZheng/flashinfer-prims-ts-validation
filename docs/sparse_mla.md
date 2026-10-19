@@ -4,7 +4,7 @@ Compare Prims-TS sparse MLA with FlashInfer's TRTLLM-Gen DSV4 backend on the sam
 
 ## Setup
 
-Use a FlashInfer source checkout containing [PR #5434](https://github.com/flashinfer-ai/flashinfer/pull/5434) at `116e4f884aaccf19ed89c7d9a5504224f6d7be59` or newer in [PerkzZheng/flashinfer](https://github.com/PerkzZheng/flashinfer/tree/feat/prims-ts-sparse-mla). Install/build that checkout following FlashInfer's instructions, including its matching TRTLLM-Gen artifacts. This driver uses the simplified separate-source metadata API; historical published results used `8ac751ee6a09d8a349a136192dc1ca48d848ac6d`. An older wheel/helper ABI is insufficient.
+Use a FlashInfer source checkout containing [PR #5434](https://github.com/flashinfer-ai/flashinfer/pull/5434) at `6fdd402bf2d2d7ea18264e86bb3a8815c56c3b92` or newer in [PerkzZheng/flashinfer](https://github.com/PerkzZheng/flashinfer/tree/feat/prims-ts-sparse-mla). Install/build that checkout following FlashInfer's instructions, including its matching TRTLLM-Gen artifacts. This driver passes per-pool indices/lengths directly and uses effective softmax/output scales; historical published results used `8ac751ee6a09d8a349a136192dc1ca48d848ac6d`. An older wheel/helper ABI is insufficient.
 
 The published full-matrix qualification used GB300 (SM103, 152 SMs), CUDA 13.0, PyTorch 2.8.0a0 from the 25.08 NVIDIA PyTorch image, and `nvidia-cutlass-dsl==4.7.0`. The separate-source API update was checked on seven selected mixed-source/no-SWA cases with GB300, PyTorch 26.08, CUDA 13.4 and DSL 4.7.0; this was not another full-matrix run.
 

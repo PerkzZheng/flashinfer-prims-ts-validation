@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "name": "scaled-mla-decode",
+  "variants": ["d576", "d512-nvfp4-extra", "d512-fp8-extra"],
+  "batches": [4, 16, 32, 64],
+  "query_lengths": [4, 8],
+  "heads": [64, 128],
+  "context_tokens": 65536,
+  "topk": 2048,
+  "page_size": 64,
+  "swa_tokens": 128,
+  "seed": 1234
+}

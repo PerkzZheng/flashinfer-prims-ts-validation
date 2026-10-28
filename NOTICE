@@ -2,6 +2,12 @@ FlashInfer PrimTS validation suite
 
 This product includes benchmark code derived from FlashInfer.
 
+The scaled-KV MLA fixtures and numerical gates are adapted from the
+qualification work for FlashInfer PR #7410. Their NVFP4 packing follows
+the E2M1/E4M3 token-interleaved layouts in vllm-project/FlashMLA's
+tests/quant.py (e2afa5f), under Apache-2.0. Copyright contributors to
+the vLLM project. The suites reuse this repository's cold-L2 graph timer.
+
 The native sparse MLA benchmark and cold-L2 CUDA Graph timer are adapted from
 the validation campaign for FlashInfer PR #5434 (implementation 8ac751ee).
 Preparation and FP64 reference helpers are loaded from the selected FlashInfer

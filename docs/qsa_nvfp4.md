@@ -25,7 +25,7 @@ Each request gets 512 selected blocks of four tokens per query token plus the ex
 
 ## Setup and execution
 
-The suites need a FlashInfer checkout with NVFP4-KV support in QSA. The recorded validation used the unpublished branch `qsa-nvfp4-kv-h64-kv16` at commit `535ceead43` (see the validation section below); the harness records the actual revision, branch, dirty state and a hash of the Prims-TS sources for every run. It does not install packages or allocate hardware.
+The suites need a FlashInfer checkout with NVFP4-KV support in QSA. The recorded validation used branch `qsa-nvfp4-kv-h64-kv16` of [PerkzZheng/flashinfer](https://github.com/PerkzZheng/flashinfer/pull/2) at commit `2d743cd37e` (see the validation section below); the harness records the actual revision, branch, dirty state and a hash of the Prims-TS sources for every run. It does not install packages or allocate hardware.
 
 ```bash
 export FLASHINFER_ROOT=/path/to/flashinfer
@@ -69,17 +69,19 @@ CUDA event timestamps on the qualified GB300 advance in steps of about 2 µs, so
 
 ## Validation
 
-All 66 rows (54 decode, 12 prefill) passed on one GB300 with PyTorch 26.08 (2.14.0a0), CUDA 13.4 and CuTe DSL 4.8.1, against FlashInfer `535ceead4360a4ca463ce6466cb5e545e369480d` (clean tree; Prims-TS source hash prefix `1cddd5babaa5`), with default timing controls. The decode matrix ran as three per-TP output files and was summarized together. The worst relative L2 error over every row and check point was 0.0398 for both FP8 paths and 0.0031 for BF16-MMA.
+All 66 rows (54 decode, 12 prefill) passed on one GB300 with PyTorch 26.08 (2.14.0a0), CUDA 13.4 and CuTe DSL 4.8.1, against FlashInfer `2d743cd37e96e862e885b8cc5084394c33764889` (clean tree; Prims-TS source hash prefix `ec79e7bd45dc`), with default timing controls. The decode matrix ran as three per-TP output files and was summarized together. The worst relative L2 error over every row and check point was 0.0398 for both FP8 paths and 0.0031 for BF16-MMA.
 
 Speedups of `nvfp4-fp8mma` over FP8 KV in that run:
 
 | Decode | TP1 | TP2 | TP4 |
 |---|---|---|---|
-| MTP3, BS 16–64 | 1.20–1.38× | 1.21–1.29× | 1.11–1.22× |
-| MTP4/7, BS 16–64 | 1.15–1.28× | 1.03–1.21× | 1.03–1.18× |
-| BS 1–8, all MTP | 0.94–1.17× | 0.89–1.11× | 0.91–1.07× |
+| MTP3, BS 16–64 | 1.21–1.38× | 1.21–1.27× | 1.16–1.22× |
+| MTP4/7, BS 16–64 | 1.20–1.33× | 1.04–1.25× | 1.04–1.23× |
+| BS 1–8, all MTP | 0.94–1.14× | 0.89–1.16× | 0.90–1.13× |
 
-Prefill rows were 0.91–1.06×. BF16-MMA NVFP4 was slower than FP8 KV on every decode row. These figures describe one run of one revision; they are not expected-result assertions. The twelve CPU checks (inventory, case selection, invalid timings, failure accounting, index generation, byte accounting, summary rendering and the NVFP4 round trip) pass, as do Ruff lint/format checks.
+At MTP4/7 (G ≥ 5), Prims-TS runs the FP8 Keeps recipe fed by an NVFP4-to-FP8 transform only when the launch has at least one wave of (request, KV head) work tiles, `BS × Hkv ≥ 152` on this GPU; smaller launches use the TMEM-transformed recipe. The MTP4/7 rows with at least one wave measured 1.17–1.33× (TP1 BS64: 1.31× and 1.33×; TP1 BS32: 1.24× and 1.27×); the rows below one wave (TP2 BS16, TP4 BS16/32) measured 1.04–1.11×.
+
+Prefill rows were 0.94–1.06×. BF16-MMA NVFP4 was slower than FP8 KV on every decode row. These figures describe one run of one revision; they are not expected-result assertions. The twelve CPU checks (inventory, case selection, invalid timings, failure accounting, index generation, byte accounting, summary rendering and the NVFP4 round trip) pass, as do Ruff lint/format checks.
 
 ## Comparing revisions
 

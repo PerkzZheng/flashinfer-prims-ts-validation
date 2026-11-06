@@ -25,7 +25,7 @@ Each request gets 512 selected blocks of four tokens per query token plus the ex
 
 ## Setup and execution
 
-The suites need a FlashInfer checkout with NVFP4-KV support in QSA. The recorded validation used branch `qsa-nvfp4-kv-h64-kv16` of [PerkzZheng/flashinfer](https://github.com/PerkzZheng/flashinfer/pull/2) at commit `3b7e8bddb8` (see the validation section below); the harness records the actual revision, branch, dirty state and a hash of the Prims-TS sources for every run. It does not install packages or allocate hardware.
+The suites need a FlashInfer checkout with NVFP4-KV support in QSA. The recorded validation used branch `qsa-nvfp4-kv-h64-kv16` of [PerkzZheng/flashinfer](https://github.com/PerkzZheng/flashinfer/pull/2) at commit `513e13b097` (see the validation section below); the harness records the actual revision, branch, dirty state and a hash of the Prims-TS sources for every run. It does not install packages or allocate hardware.
 
 ```bash
 export FLASHINFER_ROOT=/path/to/flashinfer
@@ -69,19 +69,20 @@ CUDA event timestamps on the qualified GB300 advance in steps of about 2 µs, so
 
 ## Validation
 
-All 66 rows (54 decode, 12 prefill) passed on one GB300 with PyTorch 26.08 (2.14.0a0), CUDA 13.4 and CuTe DSL 4.8.1, against FlashInfer `3b7e8bddb88771527368388945827e0b75efa3e2` (clean tree; Prims-TS source hash prefix `49b2be9353a7`), with default timing controls. The decode matrix ran as three per-TP output files and was summarized together. The worst relative L2 error over every row and check point was 0.0398 for both FP8 paths and 0.0031 for BF16-MMA.
+All 66 rows (54 decode, 12 prefill) passed on one GB300 with PyTorch 26.08 (2.14.0a0), CUDA 13.4 and CuTe DSL 4.8.1, against FlashInfer `513e13b097abdd001086f893092245a55e5c59b3` (clean tree; Prims-TS source hash prefix `2ce30aa24c8b`), with default timing controls. The decode matrix ran as three per-TP output files and was summarized together. The worst relative L2 error over every row and check point was 0.0398 for both FP8 paths and 0.0031 for BF16-MMA.
 
 Speedups of `nvfp4-fp8mma` over FP8 KV in that run:
 
 | Decode | TP1 | TP2 | TP4 |
 |---|---|---|---|
-| MTP3, BS 16–64 | 1.23–1.38× | 1.21–1.28× | 1.15–1.22× |
-| MTP4/7, BS 16–64 | 1.20–1.34× | 1.14–1.25× | 1.04–1.23× |
-| BS 1–8, all MTP | 1.00–1.17× | 0.89–1.11× | 0.90–1.04× |
+| MTP3, BS 16–64 | 1.22–1.38× | 1.21–1.28× | 1.00–1.22× |
+| MTP4/7, BS 16–64 | 1.20–1.33× | 1.14–1.27× | 1.14–1.22× |
+| MTP3, BS 1–8 | 0.96–1.17× | 0.94–1.11× | 0.95–1.06× |
+| MTP4/7, BS 1–8 | 1.10–1.20× | 1.14–1.22× | 1.06–1.18× |
 
-At MTP4/7 (G ≥ 5), Prims-TS runs the FP8 Keeps recipe fed by an NVFP4-to-FP8 transform whenever its FP8 policy runs whole-sequence work tiles; launches it splits along the KV sequence use the TMEM-transformed recipe. At BS ≥ 8, the MTP4/7 rows with at least 128 (request, KV head) tiles measured 1.10–1.34× (TP1 BS64: 1.32× and 1.34×; TP1 BS32: 1.25× and 1.27×); the split rows with 32–64 tiles (TP2 BS8, TP4 BS8/16) measured 1.01–1.06×.
+At MTP4/7 (G ≥ 5), Prims-TS runs the FP8 Keeps recipe fed by an NVFP4-to-FP8 transform, persistent, in one wave or split along the KV sequence with a separate reduction; MTP3 (G4) uses the TMEM-transformed recipe. TP1 BS64 measured 1.30× and 1.33×, TP1 BS32 1.22× and 1.27×. Absolute latencies of the same revision differ between GB300 nodes: TP4 BS16 MTP3 measured 42.7 µs here against 36.7 µs for the previous revision on another node, while that revision measured 42.7 µs on this node too.
 
-Prefill rows were 0.94–1.06×. BF16-MMA NVFP4 was slower than FP8 KV on every decode row. These figures describe one run of one revision; they are not expected-result assertions. The twelve CPU checks (inventory, case selection, invalid timings, failure accounting, index generation, byte accounting, summary rendering and the NVFP4 round trip) pass, as do Ruff lint/format checks.
+Prefill rows were 0.94–1.07×. BF16-MMA NVFP4 was slower than FP8 KV on every decode row. These figures describe one run of one revision; they are not expected-result assertions. The twelve CPU checks (inventory, case selection, invalid timings, failure accounting, index generation, byte accounting, summary rendering and the NVFP4 round trip) pass, as do Ruff lint/format checks.
 
 ## Comparing revisions
 

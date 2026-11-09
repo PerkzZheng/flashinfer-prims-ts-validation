@@ -14,7 +14,6 @@ from attention_ts_qsa_nvfp4_fixtures import (
 from bench_q_token_kv_block_sparse_nvfp4 import (
     BACKENDS,
     ROOT,
-    backends_for,
     load_cases,
     main,
     summarize,
@@ -49,7 +48,7 @@ def test_inventory():
 
 
 def test_hkv4_inventory():
-    """The 64/4 suites keep the grid; BF16-Q NVFP4 has no recipe for any row."""
+    """The 64/4 suites keep the decode and prefill grids with 64/4 heads."""
     decode, prefill = load_cases(DECODE_HKV4), load_cases(PREFILL_HKV4)
     assert [r["id"] for r in decode] == [r["id"] for r in load_cases(DECODE)]
     assert [r["id"] for r in prefill] == [r["id"] for r in load_cases(PREFILL)]
@@ -58,8 +57,6 @@ def test_hkv4_inventory():
         (32, 2),
         (16, 1),
     }
-    assert all(backends_for(r) == ("nvfp4-fp8mma", "fp8") for r in decode + prefill)
-    assert all(backends_for(r) == BACKENDS for r in load_cases(DECODE))
 
 
 def test_list_and_select(capsys):
@@ -80,12 +77,9 @@ def test_invalid_timings(samples):
         timing_summary(samples)
 
 
-def complete_row(row_id="row", heads_kv=16):
+def complete_row(row_id="row"):
     return dict(
         id=row_id,
-        group_size=5,
-        heads_q=64,
-        heads_kv=heads_kv,
         status="ok",
         backends={n: dict(status="ok", median_us=1.0) for n in BACKENDS},
         speedups={"fp8": 1.25, "nvfp4-bf16mma": 1.5},
@@ -101,16 +95,6 @@ def test_failure_accounting():
     assert not summarize([row], ["row"], min_speedup=1.3)["passed"]
     assert summarize([row], ["row"], min_speedup=1.2)["passed"]
     row["backends"]["fp8"]["status"] = "failed"
-    assert not summarize([row], ["row"])["passed"]
-
-
-def test_unsupported_backend_accounting():
-    """Only a backend without a recipe for the row may be absent."""
-    row = complete_row(heads_kv=4)
-    row["backends"]["nvfp4-bf16mma"] = dict(status="unsupported")
-    assert summarize([row], ["row"])["passed"]
-    row = complete_row()
-    row["backends"]["nvfp4-bf16mma"] = dict(status="unsupported")
     assert not summarize([row], ["row"])["passed"]
 
 

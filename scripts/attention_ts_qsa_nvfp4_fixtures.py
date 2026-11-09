@@ -10,7 +10,8 @@ import numpy as np
 
 HEAD_DIM = 256
 SPARSE_BLOCK = 4
-TP_HEADS = {1: (64, 16), 2: (32, 8), 4: (16, 4)}
+# Tensor parallelism splits both the model's Q and KV heads.
+TP_DEGREES = (1, 2, 4)
 NVFP4_ROW_BYTES = HEAD_DIM // 2 + HEAD_DIM // 16
 E2M1_GRID = (0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0)
 

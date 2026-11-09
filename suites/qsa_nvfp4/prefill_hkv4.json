@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "name": "qsa-nvfp4-prefill-hkv4",
+  "description": "64/4 Hq/Hkv (TP splits both) D256 QToken-KvBlock-Sparse fixed-Q prefill: one request whose last 8K/16K tokens of a 128K context are queries.",
+  "model_heads": [64, 4],
+  "phase": "prefill",
+  "tp": [1, 2, 4],
+  "query_tokens": [8192, 16384],
+  "group_sizes": [4, 8],
+  "context_tokens": 131072,
+  "topk_blocks": 512,
+  "page_size": 16,
+  "overlap": 0.7,
+  "count_current_block": true,
+  "seed": 1234
+}

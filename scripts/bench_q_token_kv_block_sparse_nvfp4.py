@@ -29,6 +29,19 @@ PRIMARY = "nvfp4-fp8mma"
 # (and FP8 KV rounds the dequantized cache) to E4M3.
 REL_L2_LIMITS = {"nvfp4-fp8mma": 0.06, "nvfp4-bf16mma": 0.01, "fp8": 0.06}
 CHECK_TOKENS = 8
+# Above this many Q rows per KV head (G x Hq/Hkv) only the FP8 Keeps recipe
+# fed by the NVFP4 transform serves NVFP4 K/V; BF16 Q has no recipe there.
+SWAPS_MAX_Q_ROWS = 32
+
+
+def backends_for(case):
+    """Return the backends FlashInfer has a recipe for in this case."""
+    q_rows = case["group_size"] * case["heads_q"] // case["heads_kv"]
+    return tuple(
+        name
+        for name in BACKENDS
+        if name != "nvfp4-bf16mma" or q_rows <= SWAPS_MAX_Q_ROWS
+    )
 
 
 def load_cases(suite):
@@ -83,14 +96,18 @@ def load_cases(suite):
             )
     else:
         raise ValueError("Phase must be decode or prefill")
-    from attention_ts_qsa_nvfp4_fixtures import TP_HEADS
+    from attention_ts_qsa_nvfp4_fixtures import TP_DEGREES
 
+    heads_q, heads_kv = spec["model_heads"]
+    if heads_kv <= 0 or heads_q % heads_kv:
+        raise ValueError("Model Q heads must be a positive multiple of KV heads")
     for row in rows:
-        if row["tp"] not in TP_HEADS or row["batch"] <= 0:
+        tp = row["tp"]
+        if tp not in TP_DEGREES or heads_kv % tp or row["batch"] <= 0:
             raise ValueError("Unsupported TP or batch")
         if not 1 <= row["group_size"] <= 8:
             raise ValueError("Group size must be in [1, 8]")
-        row["heads_q"], row["heads_kv"] = TP_HEADS[row["tp"]]
+        row["heads_q"], row["heads_kv"] = heads_q // tp, heads_kv // tp
         row.update(common)
     if not rows or len({r["id"] for r in rows}) != len(rows):
         raise ValueError("Suite must contain nonempty, unique cases")
@@ -111,11 +128,12 @@ def timing_summary(samples):
 
 
 def summarize(rows, expected_ids, *, min_speedup=None):
-    """Require every requested row and backend; failures are never wins."""
+    """Require every requested row and supported backend; failures never win."""
     failures, below = [], []
     for row in rows:
         if row.get("status") != "ok" or any(
-            row.get("backends", {}).get(n, {}).get("status") != "ok" for n in BACKENDS
+            row.get("backends", {}).get(n, {}).get("status") != "ok"
+            for n in backends_for(row)
         ):
             failures.append(row["id"])
             continue
@@ -277,8 +295,11 @@ def benchmark_case(case, args, pools):
             *range(max(0, total_tokens - CHECK_TOKENS // 2), total_tokens),
         }
     )
+    names = backends_for(case)
     refs = {}
     for q_name, q in (("bf16", fx.q_bf16), ("fp8", fx.q_fp8)):
+        if q_name == "bf16" and "nvfp4-bf16mma" not in names:
+            continue
         refs[q_name] = reference(
             case,
             fx.indices,
@@ -287,7 +308,7 @@ def benchmark_case(case, args, pools):
             fx.block_table,
             check,
         )
-    backends = {name: make_backend(name, case, fx) for name in BACKENDS}
+    backends = {name: make_backend(name, case, fx) for name in names}
 
     def verify(name):
         backend = backends[name]
@@ -333,6 +354,12 @@ def benchmark_case(case, args, pools):
             achieved_tbps=nbytes / seconds / 1e12,
             achieved_tflops=work["flops"] / seconds / 1e12,
         )
+    for name in BACKENDS:
+        if name not in backends:
+            results[name] = dict(
+                status="unsupported",
+                reason=f"no recipe above {SWAPS_MAX_Q_ROWS} Q rows per KV head",
+            )
     first = next(iter(runners.values()))
     row = dict(
         **case,
@@ -512,7 +539,11 @@ def main(argv=None):
             result = report["cases"][-1]
             print(
                 row["id"],
-                {n: round(result["backends"][n]["median_us"], 2) for n in BACKENDS},
+                {
+                    n: round(r["median_us"], 2)
+                    for n, r in result["backends"].items()
+                    if r["status"] == "ok"
+                },
                 {n: round(v, 3) for n, v in result["speedups"].items()},
                 flush=True,
             )

@@ -14,6 +14,7 @@ from attention_ts_qsa_nvfp4_fixtures import (
 from bench_q_token_kv_block_sparse_nvfp4 import (
     BACKENDS,
     ROOT,
+    backends_for,
     load_cases,
     main,
     summarize,
@@ -23,6 +24,8 @@ from summarize_qsa_nvfp4 import render
 
 DECODE = ROOT / "suites/qsa_nvfp4/decode.json"
 PREFILL = ROOT / "suites/qsa_nvfp4/prefill.json"
+DECODE_HKV4 = ROOT / "suites/qsa_nvfp4/decode_hkv4.json"
+PREFILL_HKV4 = ROOT / "suites/qsa_nvfp4/prefill_hkv4.json"
 
 
 def test_inventory():
@@ -45,6 +48,20 @@ def test_inventory():
     assert all(r["context_tokens"] == 131072 for r in decode + prefill)
 
 
+def test_hkv4_inventory():
+    """The 64/4 suites keep the grid; BF16-Q NVFP4 has no recipe for any row."""
+    decode, prefill = load_cases(DECODE_HKV4), load_cases(PREFILL_HKV4)
+    assert [r["id"] for r in decode] == [r["id"] for r in load_cases(DECODE)]
+    assert [r["id"] for r in prefill] == [r["id"] for r in load_cases(PREFILL)]
+    assert {(r["heads_q"], r["heads_kv"]) for r in decode + prefill} == {
+        (64, 4),
+        (32, 2),
+        (16, 1),
+    }
+    assert all(backends_for(r) == ("nvfp4-fp8mma", "fp8") for r in decode + prefill)
+    assert all(backends_for(r) == BACKENDS for r in load_cases(DECODE))
+
+
 def test_list_and_select(capsys):
     """Inventory selection must not import Torch or need a source checkout."""
     assert main(["--list", "--case", "decode-tp1-b32-mtp4"]) == 0
@@ -63,9 +80,12 @@ def test_invalid_timings(samples):
         timing_summary(samples)
 
 
-def complete_row(row_id="row"):
+def complete_row(row_id="row", heads_kv=16):
     return dict(
         id=row_id,
+        group_size=5,
+        heads_q=64,
+        heads_kv=heads_kv,
         status="ok",
         backends={n: dict(status="ok", median_us=1.0) for n in BACKENDS},
         speedups={"fp8": 1.25, "nvfp4-bf16mma": 1.5},
@@ -81,6 +101,16 @@ def test_failure_accounting():
     assert not summarize([row], ["row"], min_speedup=1.3)["passed"]
     assert summarize([row], ["row"], min_speedup=1.2)["passed"]
     row["backends"]["fp8"]["status"] = "failed"
+    assert not summarize([row], ["row"])["passed"]
+
+
+def test_unsupported_backend_accounting():
+    """Only a backend without a recipe for the row may be absent."""
+    row = complete_row(heads_kv=4)
+    row["backends"]["nvfp4-bf16mma"] = dict(status="unsupported")
+    assert summarize([row], ["row"])["passed"]
+    row = complete_row()
+    row["backends"]["nvfp4-bf16mma"] = dict(status="unsupported")
     assert not summarize([row], ["row"])["passed"]
 
 

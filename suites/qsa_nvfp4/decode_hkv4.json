@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "name": "qsa-nvfp4-decode-hkv4",
+  "description": "64/4 Hq/Hkv (TP splits both) D256 QToken-KvBlock-Sparse decode at 128K context. BF16-Q NVFP4 has no recipe at 16 Q heads per KV head and is reported as unsupported.",
+  "model_heads": [64, 4],
+  "phase": "decode",
+  "tp": [1, 2, 4],
+  "batches": [1, 4, 8, 16, 32, 64],
+  "mtp": [3, 4, 7],
+  "context_tokens": 131072,
+  "topk_blocks": 512,
+  "page_size": 16,
+  "overlap": 0.7,
+  "count_current_block": true,
+  "seed": 1234
+}

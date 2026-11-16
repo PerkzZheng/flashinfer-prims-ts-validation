@@ -1,0 +1,193 @@
+{
+  "schema_version": 1,
+  "name": "issue9311",
+  "fixture": "independent-issue",
+  "timing": "hot-graph",
+  "backends": [
+    "prims_nvfp4",
+    "prims_fp8",
+    "trt_fp8",
+    "trt_nvfp4"
+  ],
+  "cases": [
+    {
+      "id": "b1-q1-d256-h16x2-kv65536-p128-bf16",
+      "batch": 1,
+      "queries": 1,
+      "head_dim": 256,
+      "heads_q": 16,
+      "heads_kv": 2,
+      "kv_len": 65536,
+      "page_size": 128,
+      "out_dtype": "bf16"
+    },
+    {
+      "id": "b2-q1-d256-h16x2-kv65536-p128-bf16",
+      "batch": 2,
+      "queries": 1,
+      "head_dim": 256,
+      "heads_q": 16,
+      "heads_kv": 2,
+      "kv_len": 65536,
+      "page_size": 128,
+      "out_dtype": "bf16"
+    },
+    {
+      "id": "b4-q1-d256-h16x2-kv65536-p128-bf16",
+      "batch": 4,
+      "queries": 1,
+      "head_dim": 256,
+      "heads_q": 16,
+      "heads_kv": 2,
+      "kv_len": 65536,
+      "page_size": 128,
+      "out_dtype": "bf16"
+    },
+    {
+      "id": "b8-q1-d256-h16x2-kv65536-p128-bf16",
+      "batch": 8,
+      "queries": 1,
+      "head_dim": 256,
+      "heads_q": 16,
+      "heads_kv": 2,
+      "kv_len": 65536,
+      "page_size": 128,
+      "out_dtype": "bf16"
+    },
+    {
+      "id": "b16-q1-d256-h16x2-kv65536-p128-bf16",
+      "batch": 16,
+      "queries": 1,
+      "head_dim": 256,
+      "heads_q": 16,
+      "heads_kv": 2,
+      "kv_len": 65536,
+      "page_size": 128,
+      "out_dtype": "bf16"
+    },
+    {
+      "id": "b32-q1-d256-h16x2-kv65536-p128-bf16",
+      "batch": 32,
+      "queries": 1,
+      "head_dim": 256,
+      "heads_q": 16,
+      "heads_kv": 2,
+      "kv_len": 65536,
+      "page_size": 128,
+      "out_dtype": "bf16"
+    },
+    {
+      "id": "b64-q1-d256-h16x2-kv65536-p128-bf16",
+      "batch": 64,
+      "queries": 1,
+      "head_dim": 256,
+      "heads_q": 16,
+      "heads_kv": 2,
+      "kv_len": 65536,
+      "page_size": 128,
+      "out_dtype": "bf16"
+    },
+    {
+      "id": "b128-q1-d256-h16x2-kv65536-p128-bf16",
+      "batch": 128,
+      "queries": 1,
+      "head_dim": 256,
+      "heads_q": 16,
+      "heads_kv": 2,
+      "kv_len": 65536,
+      "page_size": 128,
+      "out_dtype": "bf16"
+    },
+    {
+      "id": "b1-q6-d256-h16x2-kv65536-p128-bf16",
+      "batch": 1,
+      "queries": 6,
+      "head_dim": 256,
+      "heads_q": 16,
+      "heads_kv": 2,
+      "kv_len": 65536,
+      "page_size": 128,
+      "out_dtype": "bf16"
+    },
+    {
+      "id": "b2-q6-d256-h16x2-kv65536-p128-bf16",
+      "batch": 2,
+      "queries": 6,
+      "head_dim": 256,
+      "heads_q": 16,
+      "heads_kv": 2,
+      "kv_len": 65536,
+      "page_size": 128,
+      "out_dtype": "bf16"
+    },
+    {
+      "id": "b4-q6-d256-h16x2-kv65536-p128-bf16",
+      "batch": 4,
+      "queries": 6,
+      "head_dim": 256,
+      "heads_q": 16,
+      "heads_kv": 2,
+      "kv_len": 65536,
+      "page_size": 128,
+      "out_dtype": "bf16"
+    },
+    {
+      "id": "b8-q6-d256-h16x2-kv65536-p128-bf16",
+      "batch": 8,
+      "queries": 6,
+      "head_dim": 256,
+      "heads_q": 16,
+      "heads_kv": 2,
+      "kv_len": 65536,
+      "page_size": 128,
+      "out_dtype": "bf16"
+    },
+    {
+      "id": "b16-q6-d256-h16x2-kv65536-p128-bf16",
+      "batch": 16,
+      "queries": 6,
+      "head_dim": 256,
+      "heads_q": 16,
+      "heads_kv": 2,
+      "kv_len": 65536,
+      "page_size": 128,
+      "out_dtype": "bf16"
+    },
+    {
+      "id": "b32-q6-d256-h16x2-kv65536-p128-bf16",
+      "batch": 32,
+      "queries": 6,
+      "head_dim": 256,
+      "heads_q": 16,
+      "heads_kv": 2,
+      "kv_len": 65536,
+      "page_size": 128,
+      "out_dtype": "bf16"
+    },
+    {
+      "id": "b64-q6-d256-h16x2-kv65536-p128-bf16",
+      "batch": 64,
+      "queries": 6,
+      "head_dim": 256,
+      "heads_q": 16,
+      "heads_kv": 2,
+      "kv_len": 65536,
+      "page_size": 128,
+      "out_dtype": "bf16"
+    },
+    {
+      "id": "b128-q6-d256-h16x2-kv65536-p128-bf16",
+      "batch": 128,
+      "queries": 6,
+      "head_dim": 256,
+      "heads_q": 16,
+      "heads_kv": 2,
+      "kv_len": 65536,
+      "page_size": 128,
+      "out_dtype": "bf16"
+    }
+  ],
+  "planned_lengths": false,
+  "mask": "dense-q1-causal-multi",
+  "seed": 9311
+}

@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "name": "q9",
+  "fixture": "matched-nvfp4",
+  "timing": "cold-cupti",
+  "backends": [
+    "prims_nvfp4",
+    "trt_fp8"
+  ],
+  "cases": [
+    {
+      "id": "b32-q9-d512-h16x2-kv32768-p64-fp16",
+      "batch": 32,
+      "queries": 9,
+      "head_dim": 512,
+      "heads_q": 16,
+      "heads_kv": 2,
+      "kv_len": 32768,
+      "page_size": 64,
+      "out_dtype": "fp16"
+    }
+  ],
+  "planned_lengths": true,
+  "mask": "causal",
+  "seed": 9311
+}

@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "name": "fp8_controls",
+  "fixture": "normal-fp8",
+  "timing": "cold-cupti",
+  "backends": [
+    "prims_fp8"
+  ],
+  "cases": [
+    {
+      "id": "b32-q1-d128-h64x1-kv8192-p32-fp16",
+      "batch": 32,
+      "queries": 1,
+      "head_dim": 128,
+      "heads_q": 64,
+      "heads_kv": 1,
+      "kv_len": 8192,
+      "page_size": 32,
+      "out_dtype": "fp16"
+    },
+    {
+      "id": "b32-q1-d128-h64x1-kv8192-p32-bf16",
+      "batch": 32,
+      "queries": 1,
+      "head_dim": 128,
+      "heads_q": 64,
+      "heads_kv": 1,
+      "kv_len": 8192,
+      "page_size": 32,
+      "out_dtype": "bf16"
+    },
+    {
+      "id": "b128-q4-d128-h64x1-kv8192-p64-fp16",
+      "batch": 128,
+      "queries": 4,
+      "head_dim": 128,
+      "heads_q": 64,
+      "heads_kv": 1,
+      "kv_len": 8192,
+      "page_size": 64,
+      "out_dtype": "fp16"
+    },
+    {
+      "id": "b128-q4-d128-h64x1-kv8192-p64-bf16",
+      "batch": 128,
+      "queries": 4,
+      "head_dim": 128,
+      "heads_q": 64,
+      "heads_kv": 1,
+      "kv_len": 8192,
+      "page_size": 64,
+      "out_dtype": "bf16"
+    },
+    {
+      "id": "b16-q8-d64-h64x4-kv16384-p64-fp16",
+      "batch": 16,
+      "queries": 8,
+      "head_dim": 64,
+      "heads_q": 64,
+      "heads_kv": 4,
+      "kv_len": 16384,
+      "page_size": 64,
+      "out_dtype": "fp16"
+    },
+    {
+      "id": "b16-q8-d64-h64x4-kv16384-p64-bf16",
+      "batch": 16,
+      "queries": 8,
+      "head_dim": 64,
+      "heads_q": 64,
+      "heads_kv": 4,
+      "kv_len": 16384,
+      "page_size": 64,
+      "out_dtype": "bf16"
+    }
+  ],
+  "planned_lengths": true,
+  "mask": "causal",
+  "seed": 9315
+}

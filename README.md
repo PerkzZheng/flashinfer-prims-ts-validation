@@ -5,7 +5,7 @@ to qualify FlashInfer PrimTS FMHA context, FMHA decode, and MLA decode kernels.
 It exercises FlashInfer's public Python interfaces; it does not contain the
 kernels themselves.
 
-The [QSA NVFP4-KV suites](docs/qsa_nvfp4.md) add 54 decode and 12 prefill cases comparing interleaved NVFP4-KV QToken-KvBlock-Sparse-Attention (FP8 and BF16 MMA) with plain FP8-KV Prims-TS at Hq/Hkv 64/16, D256 and a 128K context, with TP1/2/4 head splits. They use matched synthetic top-k inputs, an FP32 oracle and cold-4×L2 CUDA Graph timing, require a FlashInfer checkout with NVFP4-KV QSA support, and are separate from the historical totals below.
+The [QSA NVFP4-KV suites](docs/qsa_nvfp4.md) add 54 decode and 12 prefill cases comparing interleaved NVFP4-KV QToken-KvBlock-Sparse-Attention (FP8 and BF16 MMA) with plain FP8-KV Prims-TS at Hq/Hkv 64/16, D256 and a 128K context, with TP1/2/4 head splits. A `--comparison bf16` mode instead compares BF16-Q NVFP4-KV, as interleaved rows and as separate payloads plus scale factors, with plain BF16-KV Prims-TS holding the exact dequantized values; `--nvtx` adds ranges for Nsight Systems per-call spans. They use matched synthetic top-k inputs, an FP32 oracle and cold-4×L2 CUDA Graph timing, require a FlashInfer checkout with NVFP4-KV QSA support, and are separate from the historical totals below.
 
 The [scaled-KV MLA suites](docs/scaled_mla.md) add 48 H64/H128 and 72 H8/H16/H32 decode cases comparing NVFP4 Prims-TS with plain-FP8 Prims-TS and supported FlashMLA recipes. They cover D576, D512 with two NVFP4 pools, and per-tensor FP8 SWA plus NVFP4 compressed KV, using matched inputs and cold-4×L2 CUDA Graph timing. They require the scaled-KV implementation in PR #7410 and are separate from the historical totals below.
 

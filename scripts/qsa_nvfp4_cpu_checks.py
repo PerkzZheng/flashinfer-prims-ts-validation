@@ -12,7 +12,10 @@ from attention_ts_qsa_nvfp4_fixtures import (
     tail_tokens,
 )
 from bench_q_token_kv_block_sparse_nvfp4 import (
+    BACKEND_SPECS,
     BACKENDS,
+    COMPARISONS,
+    REL_L2_LIMITS,
     ROOT,
     load_cases,
     main,
@@ -169,3 +172,101 @@ def test_nvfp4_round_trip():
     assert int(payload[0, 0]) == 0x10 and int(payload[0, 1]) == 0x3A
     rows = torch.cat([payload, scales.view(torch.uint8)], -1)
     assert torch.equal(dequantize_nvfp4_rows(rows), x)
+
+
+def test_comparisons_are_complete():
+    """Every backend of both comparisons has a cache spec and an accuracy limit."""
+    for spec in COMPARISONS.values():
+        assert spec["primary"] in spec["backends"]
+        assert spec["reference"] in spec["backends"]
+        for name in spec["backends"]:
+            assert name in BACKEND_SPECS and name in REL_L2_LIMITS
+    assert COMPARISONS["fp8"]["backends"] == BACKENDS
+    assert all(REL_L2_LIMITS[n] == 0.01 for n in COMPARISONS["bf16"]["backends"])
+
+
+def test_bf16_accounting():
+    """BF16 K/V counts four bytes per channel pair of K and V rows."""
+    case = small_case()
+    indices = build_indices(case)
+    work = accounting(case, indices)
+    unique_tokens = int(indices["unique_blocks"].sum()) * 4
+    tokens = case["batch"] * case["query_tokens"]
+    assert work["bytes"]["bf16-qbf16"] == (
+        unique_tokens * 16 * 1024 + tokens * 64 * 256 * 4
+    )
+
+
+def test_bf16_summary_and_render():
+    """The BF16 comparison gates and renders against BF16 K/V."""
+    names = COMPARISONS["bf16"]["backends"]
+    row = dict(
+        id="decode-a",
+        status="ok",
+        backends={
+            n: dict(status="ok", median_us=1.0, achieved_tbps=1.0, achieved_tflops=2.0)
+            for n in names
+        },
+        speedups={"bf16": 1.4, "nvfp4-bf16mma-separate": 1.02},
+    )
+    assert summarize([row], ["decode-a"], comparison="bf16")["passed"]
+    assert not summarize([row], ["decode-a"], min_speedup=1.5, comparison="bf16")[
+        "passed"
+    ]
+    report = dict(
+        schema="qsa-nvfp4-v1",
+        comparison="bf16",
+        cases=[row],
+        requested=["decode-a", "decode-b"],
+    )
+    text = render([report])
+    assert "NVFP4 separate µs" in text and "1.400×" in text and "1.020×" in text
+    assert "decode-b | N/A (missing)" in text
+    with pytest.raises(ValueError):
+        render([report, dict(report, comparison="fp8")])
+
+
+def test_nsys_span_extraction():
+    """Calls run from the metadata kernel to the last kernel before eviction."""
+    from qsa_nvfp4_nsys_spans import extract_spans, summarize_spans
+
+    meta = "void flashinfer::QTokenKvBlockSparseBitmapMetadataKernel<int, 5>"
+    kernels = []
+    for base, attention in ((0, 9000), (100_000, 11_000)):
+        kernels += [
+            (base, 50_000, "void at::native::reduce_kernel<512>"),
+            (base + 60_000, 8_000, meta),
+            (base + 61_000, attention, "kernel_cutlass_decode_gen_kernel"),
+            (base + 61_000 + attention, 2_000, "kernel_cutlass_reduction_kernel"),
+        ]
+    ranges = [
+        (":QSA|decode-a|nvfp4-bf16mma", 0, 90_000),
+        (":QSA|decode-a|bf16", 100_000, 190_000),
+        ("other range", 0, 190_000),
+    ]
+    spans = extract_spans(kernels, ranges)
+    assert spans[("decode-a", "nvfp4-bf16mma")] == [dict(span_us=12.0, metadata_us=8.0)]
+    assert spans[("decode-a", "bf16")] == [dict(span_us=14.0, metadata_us=8.0)]
+    summary = summarize_spans(spans)
+    assert summary["comparison"] == "bf16"
+    assert summary["cases"][0]["speedups"]["bf16"] == pytest.approx(14 / 12)
+
+
+def test_separate_scale_layout():
+    """Separate payloads and scales hold the rows' values; V scales interleave."""
+    torch = pytest.importorskip("torch")
+    from attention_ts_qsa_nvfp4_fixtures import interleave_v_scales, split_nvfp4_pools
+
+    scales = torch.arange(1 * 1 * 4 * 16, dtype=torch.int32).reshape(1, 1, 4, 16)
+    moved = interleave_v_scales(scales)
+    # Token t, block b -> token b // 4, slot (b % 4) * 4 + t (D256: 16 blocks).
+    for t in range(4):
+        for b in range(16):
+            assert int(moved[0, 0, b // 4, (b % 4) * 4 + t]) == int(scales[0, 0, t, b])
+    rows = torch.randint(0, 255, (2, 1, 4, NVFP4_ROW_BYTES), dtype=torch.uint8)
+    (k_payload, v_payload), (k_scales, v_scales) = split_nvfp4_pools(rows, rows)
+    assert torch.equal(k_payload, rows[..., :128]) and torch.equal(v_payload, k_payload)
+    assert torch.equal(k_scales.view(torch.uint8), rows[..., 128:])
+    assert torch.equal(
+        v_scales.view(torch.uint8), interleave_v_scales(rows[..., 128:].contiguous())
+    )

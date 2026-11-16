@@ -120,13 +120,14 @@ def build_indices(case):
 def accounting(case, indices):
     """Bytes and FLOPs for one call: unique needed KV once, plus Q and O.
 
-    Grouping overfetch is excluded. NVFP4 counts payload plus E4M3 scales;
-    FP8 counts E4M3 K/V. FLOPs = 4 * D * Hq * attended tokens.
+    Grouping overfetch is excluded. NVFP4 counts payload plus E4M3 scales (in
+    either layout); FP8 counts E4M3 K/V and BF16 counts BF16 K/V.
+    FLOPs = 4 * D * Hq * attended tokens.
     """
     hq, hkv = case["heads_q"], case["heads_kv"]
     tokens = case["batch"] * case["query_tokens"]
     unique_tokens = int(indices["unique_blocks"].sum()) * SPARSE_BLOCK
-    kv_row = {"nvfp4": 2 * NVFP4_ROW_BYTES, "fp8": 2 * HEAD_DIM}
+    kv_row = {"nvfp4": 2 * NVFP4_ROW_BYTES, "fp8": 2 * HEAD_DIM, "bf16": 4 * HEAD_DIM}
     q_elem = {"fp8": 1, "bf16": 2}
     out = {}
     for storage, row_bytes in kv_row.items():
@@ -207,6 +208,58 @@ def make_pools(heads_kv, pages, page_size, seed, device):
         fp8=(pools["k"][1], pools["v"][1]),
         page_order=order.to(device=device, dtype=torch.int32),
     )
+
+
+def bf16_pool(rows, chunk_pages=4096):
+    """Plain BF16 K or V holding exactly the dequantized NVFP4 values.
+
+    ``rows`` is an interleaved NVFP4 pool [pages, Hkv, page, D/2 + D/16]; every
+    E2M1 * E4M3 product is representable in BF16, so the conversion is exact.
+    Pages are converted in chunks to bound the FP32 temporary.
+    """
+    import torch
+
+    out = torch.empty(
+        *rows.shape[:-1], HEAD_DIM, dtype=torch.bfloat16, device=rows.device
+    )
+    for start in range(0, rows.shape[0], chunk_pages):
+        stop = min(rows.shape[0], start + chunk_pages)
+        out[start:stop] = dequantize_nvfp4_rows(rows[start:stop]).to(torch.bfloat16)
+    return out
+
+
+def interleave_v_scales(scales):
+    """Reorder V block scales [pages, Hkv, page, D/16] into TRT-LLM's layout.
+
+    Separate NVFP4 V scale factors interleave four consecutive tokens. With
+    ``Q = D/64`` scales per quarter row, the scale of (token ``4g + t``, block
+    ``b``) moves to token ``4g + b // Q``, slot ``(b % Q) * 4 + t``, as
+    FlashInfer's tests build them. K scales stay in natural token order.
+    """
+    pages, heads, page, blocks = scales.shape
+    return (
+        scales.reshape(pages, heads, page // 4, 4, 4, blocks // 4)
+        .permute(0, 1, 2, 4, 5, 3)
+        .reshape(scales.shape)
+        .contiguous()
+    )
+
+
+def split_nvfp4_pools(k_rows, v_rows):
+    """Split interleaved NVFP4 pools into payloads and ``kv_scale_factors``.
+
+    Returns ((K payload, V payload), (K scales, V scales)): payloads are
+    uint8 [..., D/2] and scales E4M3 [..., D/16], with V scales interleaved as
+    in :func:`interleave_v_scales`. The values are identical to the rows.
+    """
+    import torch
+
+    payloads = tuple(r[..., : HEAD_DIM // 2].contiguous() for r in (k_rows, v_rows))
+    k_scales, v_scales = (
+        r[..., HEAD_DIM // 2 :].contiguous().view(torch.float8_e4m3fn)
+        for r in (k_rows, v_rows)
+    )
+    return payloads, (k_scales, interleave_v_scales(v_scales))
 
 
 def reference(case, indices, q, k_rows, v_rows, block_table, tokens):

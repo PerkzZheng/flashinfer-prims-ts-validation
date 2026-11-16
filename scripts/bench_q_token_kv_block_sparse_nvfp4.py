@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 by FlashInfer team.
 # SPDX-License-Identifier: Apache-2.0
-"""Compare NVFP4-KV and FP8-KV Prims-TS QToken-KvBlock-Sparse-Attention.
+"""Compare NVFP4-KV with FP8-KV or BF16-KV Prims-TS QToken-KvBlock-Sparse-Attention.
 
-Every row runs the public prepared wrapper three ways on matched values:
-interleaved NVFP4 K/V with FP8 Q (FP8 MMA), the same cache with BF16 Q
-(BF16 MMA), and plain FP8 Q/K/V holding the E4M3 rounding of the dequantized
-NVFP4 values. Timing uses cold-L2 CUDA graphs.
+Every row runs the public prepared wrapper three ways on matched values. The
+default ``fp8`` comparison runs interleaved NVFP4 K/V with FP8 Q (FP8 MMA),
+the same cache with BF16 Q (BF16 MMA), and plain FP8 Q/K/V holding the E4M3
+rounding of the dequantized NVFP4 values. The ``bf16`` comparison runs BF16 Q
+over interleaved NVFP4 rows, over the same values as separate payloads with
+``kv_scale_factors``, and over plain BF16 K/V holding exactly the dequantized
+values. Timing uses cold-L2 CUDA graphs.
 """
 
 import argparse
@@ -22,13 +25,45 @@ from pathlib import Path
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
-BACKENDS = ("nvfp4-fp8mma", "nvfp4-bf16mma", "fp8")
-PRIMARY = "nvfp4-fp8mma"
+# Each comparison names its backends, the NVFP4 backend that speedups divide
+# by, and the plain-cache reference. Speedup = backend median / primary median.
+COMPARISONS = {
+    "fp8": dict(
+        backends=("nvfp4-fp8mma", "nvfp4-bf16mma", "fp8"),
+        primary="nvfp4-fp8mma",
+        reference="fp8",
+    ),
+    "bf16": dict(
+        backends=("nvfp4-bf16mma", "nvfp4-bf16mma-separate", "bf16"),
+        primary="nvfp4-bf16mma",
+        reference="bf16",
+    ),
+}
+BACKENDS = COMPARISONS["fp8"]["backends"]
+PRIMARY = COMPARISONS["fp8"]["primary"]
+# Per backend: (cache in the fixture, Q dtype, cache kind for byte accounting).
+# ``nvfp4-separate`` holds the same NVFP4 values as payloads plus scale tensors.
+BACKEND_SPECS = {
+    "nvfp4-fp8mma": ("nvfp4", "fp8", "nvfp4"),
+    "nvfp4-bf16mma": ("nvfp4", "bf16", "nvfp4"),
+    "nvfp4-bf16mma-separate": ("nvfp4-separate", "bf16", "nvfp4"),
+    "fp8": ("fp8", "fp8", "fp8"),
+    "bf16": ("bf16", "bf16", "bf16"),
+}
 # Relative L2 limits against the FP32 oracle over dequantized NVFP4 values.
-# BF16 MMA is exact up to BF16 P/O rounding; the FP8 paths also round Q and P
-# (and FP8 KV rounds the dequantized cache) to E4M3.
-REL_L2_LIMITS = {"nvfp4-fp8mma": 0.06, "nvfp4-bf16mma": 0.01, "fp8": 0.06}
+# BF16 MMA (with NVFP4 or the exact BF16 dequantization) is exact up to BF16
+# P/O rounding; the FP8 paths also round Q and P (and FP8 KV rounds the
+# dequantized cache) to E4M3.
+REL_L2_LIMITS = {
+    "nvfp4-fp8mma": 0.06,
+    "nvfp4-bf16mma": 0.01,
+    "nvfp4-bf16mma-separate": 0.01,
+    "fp8": 0.06,
+    "bf16": 0.01,
+}
 CHECK_TOKENS = 8
+# NVTX range prefix marking each backend's timed replays (see --nvtx).
+NVTX_PREFIX = "QSA"
 
 
 def load_cases(suite):
@@ -114,16 +149,22 @@ def timing_summary(samples):
     )
 
 
-def summarize(rows, expected_ids, *, min_speedup=None):
-    """Require every requested row and backend; failures are never wins."""
+def summarize(rows, expected_ids, *, min_speedup=None, comparison="fp8"):
+    """Require every requested row and backend; failures are never wins.
+
+    ``min_speedup`` applies to the comparison's plain-cache reference, i.e.
+    reference median / primary NVFP4 median.
+    """
+    spec = COMPARISONS[comparison]
     failures, below = [], []
     for row in rows:
         if row.get("status") != "ok" or any(
-            row.get("backends", {}).get(n, {}).get("status") != "ok" for n in BACKENDS
+            row.get("backends", {}).get(n, {}).get("status") != "ok"
+            for n in spec["backends"]
         ):
             failures.append(row["id"])
             continue
-        if min_speedup is not None and row["speedups"]["fp8"] < min_speedup:
+        if min_speedup is not None and row["speedups"][spec["reference"]] < min_speedup:
             below.append(row["id"])
     complete = len(rows) == len(expected_ids) and {r["id"] for r in rows} == set(
         expected_ids
@@ -139,15 +180,26 @@ def summarize(rows, expected_ids, *, min_speedup=None):
 
 
 class Pools:
-    """Matched NVFP4/FP8 caches, reused across rows with the same KV heads."""
+    """Matched caches, reused across rows with the same KV heads.
 
-    def __init__(self, device):
+    The ``fp8`` comparison keeps interleaved NVFP4 rows and their FP8
+    rounding. The ``bf16`` comparison keeps the NVFP4 rows, the same values as
+    separate payloads and scales, and their exact BF16 dequantization, and
+    drops the unused FP8 pool to bound memory.
+    """
+
+    def __init__(self, device, comparison="fp8"):
         self.device = device
+        self.comparison = comparison
         self.key = None
         self.data = None
 
     def get(self, heads_kv, pages, page_size, seed):
-        from attention_ts_qsa_nvfp4_fixtures import make_pools
+        from attention_ts_qsa_nvfp4_fixtures import (
+            bf16_pool,
+            make_pools,
+            split_nvfp4_pools,
+        )
 
         key = (heads_kv, page_size, seed)
         if self.key != key or self.data["page_order"].numel() < pages:
@@ -155,7 +207,15 @@ class Pools:
 
             self.data = None
             torch.cuda.empty_cache()
-            self.data = make_pools(heads_kv, pages, page_size, seed, self.device)
+            data = make_pools(heads_kv, pages, page_size, seed, self.device)
+            if self.comparison == "bf16":
+                del data["fp8"]
+                torch.cuda.empty_cache()
+                payloads, scale_factors = split_nvfp4_pools(*data["nvfp4"])
+                data["nvfp4-separate"] = payloads
+                data["scale_factors"] = scale_factors
+                data["bf16"] = tuple(bf16_pool(rows) for rows in data["nvfp4"])
+            self.data = data
             self.key = key
         return self.data
 
@@ -168,9 +228,13 @@ def make_backend(name, case, fx):
         get_q_token_kv_block_sparse_workspace_size,
     )
 
-    storage = "fp8" if name == "fp8" else "nvfp4"
-    q = fx.q_bf16 if name == "nvfp4-bf16mma" else fx.q_fp8
+    storage, q_dtype, _ = BACKEND_SPECS[name]
+    q = fx.q_bf16 if q_dtype == "bf16" else fx.q_fp8
     k_cache, v_cache = fx.caches[storage]
+    # Separate NVFP4 payloads take their block scales as kv_scale_factors.
+    extra = (
+        dict(kv_scale_factors=fx.scale_factors) if storage == "nvfp4-separate" else {}
+    )
     out = torch.empty(q.shape, dtype=torch.bfloat16, device=q.device)
     workspace = torch.zeros(
         get_q_token_kv_block_sparse_workspace_size(
@@ -222,6 +286,7 @@ def make_backend(name, case, fx):
             sm_scale=256**-0.5,
             v_scale=1.0,
             out=out,
+            **extra,
         )
 
     return SimpleNamespace(
@@ -257,7 +322,12 @@ def make_fixture(case, pools):
         indices=indices,
         ids=torch.from_numpy(indices["ids"]).to(device),
         block_table=block_table,
-        caches=dict(nvfp4=data["nvfp4"], fp8=data["fp8"]),
+        caches={
+            kind: data[kind]
+            for kind in ("nvfp4", "fp8", "nvfp4-separate", "bf16")
+            if kind in data
+        },
+        scale_factors=data.get("scale_factors"),
         q_bf16=q_bf16,
         q_fp8=q_bf16.to(torch.float8_e4m3fn),
         seq_lens=torch.full(
@@ -281,8 +351,12 @@ def benchmark_case(case, args, pools):
             *range(max(0, total_tokens - CHECK_TOKENS // 2), total_tokens),
         }
     )
+    comparison = COMPARISONS[args.comparison]
+    names = comparison["backends"]
     refs = {}
     for q_name, q in (("bf16", fx.q_bf16), ("fp8", fx.q_fp8)):
+        if all(BACKEND_SPECS[n][1] != q_name for n in names):
+            continue
         refs[q_name] = reference(
             case,
             fx.indices,
@@ -291,12 +365,13 @@ def benchmark_case(case, args, pools):
             fx.block_table,
             check,
         )
-    backends = {name: make_backend(name, case, fx) for name in BACKENDS}
+    backends = {name: make_backend(name, case, fx) for name in names}
 
     def verify(name):
+        """Check sampled tokens of one backend against its Q dtype's oracle."""
         backend = backends[name]
         out = backend.out.reshape(total_tokens, case["heads_q"], 256)[check]
-        expected = refs["bf16" if name == "nvfp4-bf16mma" else "fp8"]
+        expected = refs[BACKEND_SPECS[name][1]]
         return check_output(out, expected, rel_l2_limit=REL_L2_LIMITS[name])
 
     results, runners = {}, {}
@@ -324,14 +399,20 @@ def benchmark_case(case, args, pools):
         if replay % 2:
             order.reverse()
         for name in order:
+            # Optional NVTX range "QSA|<case>|<backend>" around each sampled
+            # replay, for per-kernel GPU spans from an Nsight Systems trace.
+            if args.nvtx:
+                torch.cuda.nvtx.range_push(f"{NVTX_PREFIX}|{case['id']}|{name}")
             samples[name].extend(runners[name].sample())
+            if args.nvtx:
+                torch.cuda.nvtx.range_pop()
     work = accounting(case, fx.indices)
     for name in backends:
         results[name].update(timing_summary(samples[name]))
         results[name]["accuracy"]["after_timing"] = verify(name)
         seconds = results[name]["median_us"] * 1e-6
-        q_dtype = "bf16" if name == "nvfp4-bf16mma" else "fp8"
-        nbytes = work["bytes"][f"{backends[name].storage}-q{q_dtype}"]
+        _, q_dtype, kind = BACKEND_SPECS[name]
+        nbytes = work["bytes"][f"{kind}-q{q_dtype}"]
         results[name].update(
             bytes=nbytes,
             achieved_tbps=nbytes / seconds / 1e12,
@@ -348,9 +429,10 @@ def benchmark_case(case, args, pools):
         l2_bytes=first.l2_bytes,
         eviction_bytes=first.eviction_bytes,
         speedups={
-            name: results[name]["median_us"] / results[PRIMARY]["median_us"]
+            name: results[name]["median_us"]
+            / results[comparison["primary"]]["median_us"]
             for name in backends
-            if name != PRIMARY
+            if name != comparison["primary"]
         },
     )
     # Graph owners, plans and workspaces go out of scope with this frame.
@@ -435,9 +517,22 @@ def main(argv=None):
         "--quick", action="store_true", help="One sample per replay; functional only"
     )
     parser.add_argument(
+        "--comparison",
+        choices=sorted(COMPARISONS),
+        default="fp8",
+        help="fp8: NVFP4 (FP8/BF16 MMA) vs FP8 K/V; bf16: BF16-Q NVFP4 rows and "
+        "separate scales vs BF16 K/V",
+    )
+    parser.add_argument(
+        "--nvtx",
+        action="store_true",
+        help="Mark each timed replay with an NVTX range for qsa_nvfp4_nsys_spans.py",
+    )
+    parser.add_argument(
         "--min-speedup",
         type=float,
-        help="Optional FP8 / NVFP4-FP8-MMA median target, e.g. 1.3; no implicit gate",
+        help="Optional reference / primary NVFP4 median target (FP8 / NVFP4 FP8-MMA, "
+        "or BF16 / NVFP4 BF16-MMA), e.g. 1.3; no implicit gate",
     )
     args = parser.parse_args(argv)
     args.suite = args.suite.resolve()
@@ -467,10 +562,14 @@ def main(argv=None):
     args.source_root = args.source_root.resolve()
     if args.quick:
         args.samples_per_replay = 1
+    comparison = COMPARISONS[args.comparison]
     report = dict(
         schema="qsa-nvfp4-v1",
         status="running",
         suite=args.suite.name,
+        comparison=args.comparison,
+        backends=list(comparison["backends"]),
+        primary=comparison["primary"],
         cases=[],
         requested=[r["id"] for r in rows],
         quick=args.quick,
@@ -481,6 +580,7 @@ def main(argv=None):
             cuda_graph=True,
             timed="prepared metadata, attention and required split reduction",
             excluded="index generation, planning, allocation, quantization, L2 eviction",
+            nvtx=args.nvtx,
         ),
         numerical_contract=(
             "FP32 oracle over dequantized NVFP4 values on sampled tokens; "
@@ -500,7 +600,7 @@ def main(argv=None):
         report["provenance"] = provenance(args)
         import torch
 
-        pools = Pools(torch.device("cuda", args.device))
+        pools = Pools(torch.device("cuda", args.device), args.comparison)
         # Group by KV heads so one pool, sized for the largest batch, serves them.
         for row in sorted(rows, key=lambda r: (r["heads_kv"], -r["batch"])):
             try:
@@ -516,14 +616,20 @@ def main(argv=None):
             result = report["cases"][-1]
             print(
                 row["id"],
-                {n: round(result["backends"][n]["median_us"], 2) for n in BACKENDS},
+                {
+                    n: round(result["backends"][n]["median_us"], 2)
+                    for n in comparison["backends"]
+                },
                 {n: round(v, 3) for n, v in result["speedups"].items()},
                 flush=True,
             )
     except Exception as error:
         report["error"] = f"{type(error).__name__}: {error}"
     report["summary"] = summarize(
-        report["cases"], report["requested"], min_speedup=args.min_speedup
+        report["cases"],
+        report["requested"],
+        min_speedup=args.min_speedup,
+        comparison=args.comparison,
     )
     report["status"] = "passed" if report["summary"]["passed"] else "failed"
     save()

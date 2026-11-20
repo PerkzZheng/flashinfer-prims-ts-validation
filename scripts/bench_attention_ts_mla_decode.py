@@ -2468,7 +2468,14 @@ def _load_runtime() -> dict[str, Any]:
             make_attention_ts_mla_decode_case,
         )
         from flashinfer.attention.prims_ts import BatchMLADecodePagedTSWrapper
-        from flashinfer.attention.prims_ts.mla_decode import _get_compiled_mla_decode
+        try:  # one folder per feature (prims_ts/mla_decode/launch.py)
+            from flashinfer.attention.prims_ts.mla_decode.launch import (
+                get_compiled_mla_decode as _get_compiled_mla_decode,
+            )
+        except ImportError:  # single-module layout
+            from flashinfer.attention.prims_ts.mla_decode import (
+                _get_compiled_mla_decode,
+            )
         from flashinfer.mla import (
             get_prims_ts_batch_decode_mla_workspace_size,
             prims_ts_batch_decode_with_kv_cache_mla,

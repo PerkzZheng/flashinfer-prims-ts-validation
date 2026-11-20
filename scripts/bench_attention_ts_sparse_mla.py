@@ -10,6 +10,7 @@ Preparation is excluded equally; all attention finishing remains timed.
 
 import argparse
 import hashlib
+import inspect
 import importlib.metadata
 import importlib.util
 import itertools
@@ -275,6 +276,12 @@ def run_case(case, args, helpers):
             chunk = tensor[start : start + 16 * 1024 * 1024].cpu()
             digest.update(memoryview(chunk.numpy()))
         fingerprints[name] = digest.hexdigest()
+    # The test helper renamed ``sinks`` to ``attention_sinks``.
+    sink_kwarg = (
+        "attention_sinks"
+        if "attention_sinks" in inspect.signature(helpers._reference).parameters
+        else "sinks"
+    )
     expected, _, bound = helpers._reference(
         f.query,
         f.swa,
@@ -283,8 +290,8 @@ def run_case(case, args, helpers):
         f.ci,
         lengths=f.sl,
         extra_lengths=f.cl,
-        sinks=f.sinks,
         softmax_scale=f.softmax_scale,
+        **{sink_kwarg: f.sinks},
     )
     if f.query.dtype == torch.bfloat16:
         bound = expected.abs() * 0.02 + 8e-4

@@ -7,6 +7,8 @@ kernels themselves.
 
 The [dense NVFP4 decode suites](docs/nvfp4_decode.md) reproduce the #9311 full batch-size matrix, #6979 D512 controls, Q9 follow-up, and six FP8 dispatch-review controls from #9315. They preserve the historical hot-graph and matched-input cold-CUPTI protocols separately, include optional dispatch auditing, and require the newer source/CUDA/DSL environment documented with the suite. They are separate from the historical totals below.
 
+The [mask-tile dispatch A/B suite](docs/mask_tiles.md) covers 33 context, decode and MLA cases. Together they exercise every masked-tile path: sliding and variable windows, shifted causal at D128/D256, grouped causal MTP, FP8 Q128, packed-Q MLA and context-parallel MLA. The suite runs a base and a candidate checkout alternately on one GPU. It requires bitwise-identical outputs and an FP32-oracle pass, and gates the median paired latency ratio per case at +1%. It is separate from the historical totals below.
+
 The [QSA NVFP4-KV suites](docs/qsa_nvfp4.md) add 54 decode and 12 prefill cases comparing interleaved NVFP4-KV QToken-KvBlock-Sparse-Attention (FP8 and BF16 MMA) with plain FP8-KV Prims-TS at Hq/Hkv 64/16, D256 and a 128K context, with TP1/2/4 head splits. A `--comparison bf16` mode instead compares BF16-Q NVFP4-KV, as interleaved rows and as separate payloads plus scale factors, with plain BF16-KV Prims-TS holding the exact dequantized values; `--nvtx` adds ranges for Nsight Systems per-call spans. They use matched synthetic top-k inputs, an FP32 oracle and cold-4×L2 CUDA Graph timing, require a FlashInfer checkout with NVFP4-KV QSA support, and are separate from the historical totals below.
 
 The [scaled-KV MLA suites](docs/scaled_mla.md) add 48 H64/H128 and 72 H8/H16/H32 decode cases comparing NVFP4 Prims-TS with plain-FP8 Prims-TS and supported FlashMLA recipes. They cover D576, D512 with two NVFP4 pools, and per-tensor FP8 SWA plus NVFP4 compressed KV, using matched inputs and cold-4×L2 CUDA Graph timing. They require the scaled-KV implementation in PR #7410 and are separate from the historical totals below.
@@ -304,6 +306,11 @@ scripts/bench_attention_ts_scaled_mla.py packed NVFP4 vs plain FP8 and FlashMLA
 scripts/summarize_scaled_mla.py         absolute latency and speedup tables
 suites/scaled_mla/*.json                48 standard-head + 72 small-head cases
 docs/scaled_mla.md                      layouts, reference scope and fair timing
+scripts/bench_attention_ts_mask_tiles.py mask-tile cases against one checkout
+scripts/run_mask_tiles_ab.py            interleaved base/candidate rounds
+scripts/summarize_mask_tiles.py         paired-ratio, output-identity gate
+suites/mask_tiles/mask_tiles.json       33 masked context/decode/MLA cases
+docs/mask_tiles.md                      mask-tile inputs, timing and gate
 ```
 
 ## License

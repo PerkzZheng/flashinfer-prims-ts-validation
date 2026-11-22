@@ -1,0 +1,720 @@
+{
+  "schema_version": 1,
+  "name": "mask_tiles",
+  "seed": 20261122,
+  "timing": {
+    "warmups": 3,
+    "samples": 7,
+    "calls_per_sample": 10
+  },
+  "tolerance": {
+    "bf16": {
+      "rel_l2": 0.01,
+      "max_abs": 0.01
+    },
+    "fp8": {
+      "rel_l2": 0.05,
+      "max_abs": 0.02
+    }
+  },
+  "cases": [
+    {
+      "id": "ctx-fixed-causal-d128-s8k",
+      "family": "context",
+      "covers": "causal S_q=S_kv: masked tiles only in TAIL (control)",
+      "dtype": "bf16",
+      "layout": "fixed",
+      "batch": 1,
+      "q_lens": 8192,
+      "kv_extra": 0,
+      "heads_q": 32,
+      "heads_kv": 8,
+      "head_dim": 128,
+      "mask": "causal",
+      "window_left": -1
+    },
+    {
+      "id": "ctx-fixed-swa1024-d128-s8k",
+      "family": "context",
+      "covers": "sliding window: cached LOOP [begin, end) tile range",
+      "dtype": "bf16",
+      "layout": "fixed",
+      "batch": 1,
+      "q_lens": 8192,
+      "kv_extra": 0,
+      "heads_q": 32,
+      "heads_kv": 8,
+      "head_dim": 128,
+      "mask": "causal",
+      "window_left": 1024
+    },
+    {
+      "id": "ctx-fixed-swa4000-d128-s8k",
+      "family": "context",
+      "covers": "sliding window wider than the LOOP prefix",
+      "dtype": "bf16",
+      "layout": "fixed",
+      "batch": 1,
+      "q_lens": 8192,
+      "kv_extra": 0,
+      "heads_q": 32,
+      "heads_kv": 8,
+      "head_dim": 128,
+      "mask": "causal",
+      "window_left": 4000
+    },
+    {
+      "id": "ctx-fixed-varwin2048-d128-s4k",
+      "family": "context",
+      "covers": "per-token variable window: cached LOOP tile range",
+      "dtype": "bf16",
+      "layout": "fixed",
+      "batch": 2,
+      "q_lens": 4096,
+      "kv_extra": 0,
+      "heads_q": 32,
+      "heads_kv": 8,
+      "head_dim": 128,
+      "mask": "causal",
+      "window_left": -1,
+      "variable_window": 2048
+    },
+    {
+      "id": "ctx-ragged-causal-d128-kvx1024",
+      "family": "context",
+      "covers": "packed causal with S_kv > S_q: query-offset LOOP mask",
+      "dtype": "bf16",
+      "layout": "ragged",
+      "batch": 4,
+      "q_lens": [
+        3000,
+        5000,
+        1500,
+        7001
+      ],
+      "kv_extra": 1024,
+      "heads_q": 32,
+      "heads_kv": 8,
+      "head_dim": 128,
+      "mask": "causal",
+      "window_left": -1
+    },
+    {
+      "id": "ctx-ragged-swa2048-d128-kvx1024",
+      "family": "context",
+      "covers": "packed sliding window with S_kv > S_q",
+      "dtype": "bf16",
+      "layout": "ragged",
+      "batch": 4,
+      "q_lens": [
+        3000,
+        5000,
+        1500,
+        7001
+      ],
+      "kv_extra": 1024,
+      "heads_q": 32,
+      "heads_kv": 8,
+      "head_dim": 128,
+      "mask": "causal",
+      "window_left": 2048
+    },
+    {
+      "id": "ctx-ragged-dense-d128-kvx777",
+      "family": "context",
+      "covers": "packed dense: right mask on the last K tile only",
+      "dtype": "bf16",
+      "layout": "ragged",
+      "batch": 4,
+      "q_lens": [
+        3000,
+        5000,
+        1500,
+        7001
+      ],
+      "kv_extra": 777,
+      "heads_q": 32,
+      "heads_kv": 8,
+      "head_dim": 128,
+      "mask": "dense",
+      "window_left": -1
+    },
+    {
+      "id": "ctx-paged-causal-d128-h32x4-q256-k4096",
+      "family": "context",
+      "covers": "paged shifted causal, D128",
+      "dtype": "bf16",
+      "layout": "paged",
+      "batch": 4,
+      "q_lens": 256,
+      "kv_extra": 3840,
+      "heads_q": 32,
+      "heads_kv": 4,
+      "head_dim": 128,
+      "mask": "causal",
+      "window_left": -1,
+      "page_size": 32
+    },
+    {
+      "id": "ctx-paged-causal-d256-h32x4-q256-k4096-b1",
+      "family": "context",
+      "covers": "paged shifted causal, D256 (register-bound LDTM softmax)",
+      "dtype": "bf16",
+      "layout": "paged",
+      "batch": 1,
+      "q_lens": 256,
+      "kv_extra": 3840,
+      "heads_q": 32,
+      "heads_kv": 4,
+      "head_dim": 256,
+      "mask": "causal",
+      "window_left": -1,
+      "page_size": 32
+    },
+    {
+      "id": "ctx-paged-causal-d256-h32x4-q256-k4096-b4",
+      "family": "context",
+      "covers": "paged shifted causal, D256 (register-bound LDTM softmax)",
+      "dtype": "bf16",
+      "layout": "paged",
+      "batch": 4,
+      "q_lens": 256,
+      "kv_extra": 3840,
+      "heads_q": 32,
+      "heads_kv": 4,
+      "head_dim": 256,
+      "mask": "causal",
+      "window_left": -1,
+      "page_size": 32
+    },
+    {
+      "id": "ctx-paged-causal-d256-h32x32-q256-k4096-b4",
+      "family": "context",
+      "covers": "paged shifted causal, D256 MHA",
+      "dtype": "bf16",
+      "layout": "paged",
+      "batch": 4,
+      "q_lens": 256,
+      "kv_extra": 3840,
+      "heads_q": 32,
+      "heads_kv": 32,
+      "head_dim": 256,
+      "mask": "causal",
+      "window_left": -1,
+      "page_size": 32
+    },
+    {
+      "id": "ctx-paged-causal-d256-h32x4-q4096-k4096",
+      "family": "context",
+      "covers": "paged causal S_q=S_kv, D256 (control)",
+      "dtype": "bf16",
+      "layout": "paged",
+      "batch": 4,
+      "q_lens": 4096,
+      "kv_extra": 0,
+      "heads_q": 32,
+      "heads_kv": 4,
+      "head_dim": 256,
+      "mask": "causal",
+      "window_left": -1,
+      "page_size": 32
+    },
+    {
+      "id": "dec-q1-dense-unaligned",
+      "family": "decode",
+      "covers": "SQ1 dense, unaligned lengths: right mask on the last tile",
+      "dtype": "bf16",
+      "batch": 64,
+      "kv_lens": {
+        "lo": 1000,
+        "hi": 8000,
+        "seed": 5
+      },
+      "queries": 1,
+      "heads_q": 32,
+      "heads_kv": 8,
+      "head_dim": 128,
+      "page_size": 32,
+      "mask": "dense",
+      "window_left": -1
+    },
+    {
+      "id": "dec-q1-dense-d256",
+      "family": "decode",
+      "covers": "SQ1 dense D256 (control)",
+      "dtype": "bf16",
+      "batch": 16,
+      "kv_lens": {
+        "lo": 2048,
+        "hi": 8192,
+        "seed": 6
+      },
+      "queries": 1,
+      "heads_q": 32,
+      "heads_kv": 4,
+      "head_dim": 256,
+      "page_size": 32,
+      "mask": "dense",
+      "window_left": -1
+    },
+    {
+      "id": "dec-q4-causal",
+      "family": "decode",
+      "covers": "grouped causal MTP: cached visible K end",
+      "dtype": "bf16",
+      "batch": 32,
+      "kv_lens": {
+        "lo": 2000,
+        "hi": 6000,
+        "seed": 7
+      },
+      "queries": 4,
+      "heads_q": 32,
+      "heads_kv": 8,
+      "head_dim": 128,
+      "page_size": 32,
+      "mask": "causal",
+      "window_left": -1
+    },
+    {
+      "id": "dec-q8-causal-h64",
+      "family": "decode",
+      "covers": "grouped causal MTP, 8 tokens",
+      "dtype": "bf16",
+      "batch": 16,
+      "kv_lens": {
+        "lo": 2000,
+        "hi": 6000,
+        "seed": 8
+      },
+      "queries": 8,
+      "heads_q": 64,
+      "heads_kv": 8,
+      "head_dim": 128,
+      "page_size": 32,
+      "mask": "causal",
+      "window_left": -1
+    },
+    {
+      "id": "dec-q1-swa1024",
+      "family": "decode",
+      "covers": "SQ1 sliding window: cached visible K interval",
+      "dtype": "bf16",
+      "batch": 32,
+      "kv_lens": {
+        "lo": 4000,
+        "hi": 9000,
+        "seed": 9
+      },
+      "queries": 1,
+      "heads_q": 32,
+      "heads_kv": 8,
+      "head_dim": 128,
+      "page_size": 32,
+      "mask": "causal",
+      "window_left": 1024
+    },
+    {
+      "id": "dec-q4-swa1024",
+      "family": "decode",
+      "covers": "MTP sliding window: cached visible K interval",
+      "dtype": "bf16",
+      "batch": 16,
+      "kv_lens": {
+        "lo": 4000,
+        "hi": 9000,
+        "seed": 10
+      },
+      "queries": 4,
+      "heads_q": 32,
+      "heads_kv": 8,
+      "head_dim": 128,
+      "page_size": 32,
+      "mask": "causal",
+      "window_left": 1024
+    },
+    {
+      "id": "dec-fp8-g128-q8-causal",
+      "family": "decode",
+      "covers": "FP8 grouped Q128 causal",
+      "dtype": "fp8",
+      "batch": 16,
+      "kv_lens": {
+        "lo": 2000,
+        "hi": 6000,
+        "seed": 11
+      },
+      "queries": 8,
+      "heads_q": 128,
+      "heads_kv": 8,
+      "head_dim": 128,
+      "page_size": 32,
+      "mask": "causal",
+      "window_left": -1
+    },
+    {
+      "id": "dec-fp8-g128-q4-causal",
+      "family": "decode",
+      "covers": "FP8 grouped Q128 causal, 256 heads",
+      "dtype": "fp8",
+      "batch": 16,
+      "kv_lens": {
+        "lo": 2000,
+        "hi": 6000,
+        "seed": 12
+      },
+      "queries": 4,
+      "heads_q": 256,
+      "heads_kv": 8,
+      "head_dim": 128,
+      "page_size": 32,
+      "mask": "causal",
+      "window_left": -1
+    },
+    {
+      "id": "mla-q1-causal-unaligned",
+      "family": "mla",
+      "covers": "SQ1 causal: rows share the request length",
+      "dtype": "bf16",
+      "batch": 64,
+      "kv_lens": {
+        "lo": 1000,
+        "hi": 8000,
+        "seed": 13
+      },
+      "q_lens": 1,
+      "packed": false,
+      "heads_q": 128,
+      "page_size": 64,
+      "mask": "causal"
+    },
+    {
+      "id": "mla-q1-dense-aligned",
+      "family": "mla",
+      "covers": "SQ1 dense, tile-aligned lengths (control)",
+      "dtype": "bf16",
+      "batch": 64,
+      "kv_lens": {
+        "lo": 1024,
+        "hi": 8192,
+        "seed": 14,
+        "align": 64
+      },
+      "q_lens": 1,
+      "packed": false,
+      "heads_q": 128,
+      "page_size": 64,
+      "mask": "dense"
+    },
+    {
+      "id": "mla-q4-causal",
+      "family": "mla",
+      "covers": "fixed causal MTP: cached common K prefix",
+      "dtype": "bf16",
+      "batch": 32,
+      "kv_lens": {
+        "lo": 2000,
+        "hi": 6000,
+        "seed": 15
+      },
+      "q_lens": 4,
+      "packed": false,
+      "heads_q": 128,
+      "page_size": 64,
+      "mask": "causal"
+    },
+    {
+      "id": "mla-q1-causal-long-b2",
+      "family": "mla",
+      "covers": "two long requests (split KV)",
+      "dtype": "bf16",
+      "batch": 2,
+      "kv_lens": [
+        32769,
+        30001
+      ],
+      "q_lens": 1,
+      "packed": false,
+      "heads_q": 128,
+      "page_size": 64,
+      "mask": "causal"
+    },
+    {
+      "id": "mla-varq-causal",
+      "family": "mla",
+      "covers": "packed-Q causal: prefix from qo_indptr, cached per work tile",
+      "dtype": "bf16",
+      "batch": 32,
+      "kv_lens": {
+        "lo": 2000,
+        "hi": 6000,
+        "seed": 16
+      },
+      "q_lens": [
+        1,
+        4,
+        3,
+        2,
+        1,
+        4,
+        3,
+        2,
+        1,
+        4,
+        3,
+        2,
+        1,
+        4,
+        3,
+        2,
+        1,
+        4,
+        3,
+        2,
+        1,
+        4,
+        3,
+        2,
+        1,
+        4,
+        3,
+        2,
+        1,
+        4,
+        3,
+        2
+      ],
+      "packed": true,
+      "heads_q": 128,
+      "page_size": 64,
+      "mask": "causal"
+    },
+    {
+      "id": "mla-h16-q4-causal",
+      "family": "mla",
+      "covers": "few heads (1CTA path), causal MTP",
+      "dtype": "bf16",
+      "batch": 64,
+      "kv_lens": {
+        "lo": 2000,
+        "hi": 6000,
+        "seed": 17
+      },
+      "q_lens": 4,
+      "packed": false,
+      "heads_q": 16,
+      "page_size": 64,
+      "mask": "causal"
+    },
+    {
+      "id": "mla-h16-varq-causal",
+      "family": "mla",
+      "covers": "few heads (1CTA path), packed-Q causal",
+      "dtype": "bf16",
+      "batch": 32,
+      "kv_lens": {
+        "lo": 2000,
+        "hi": 6000,
+        "seed": 18
+      },
+      "q_lens": [
+        1,
+        4,
+        3,
+        2,
+        1,
+        4,
+        3,
+        2,
+        1,
+        4,
+        3,
+        2,
+        1,
+        4,
+        3,
+        2,
+        1,
+        4,
+        3,
+        2,
+        1,
+        4,
+        3,
+        2,
+        1,
+        4,
+        3,
+        2,
+        1,
+        4,
+        3,
+        2
+      ],
+      "packed": true,
+      "heads_q": 16,
+      "page_size": 64,
+      "mask": "causal"
+    },
+    {
+      "id": "mla-h32-q1-dense-unaligned",
+      "family": "mla",
+      "covers": "few heads (1CTA path), dense unaligned: last tile only",
+      "dtype": "bf16",
+      "batch": 64,
+      "kv_lens": {
+        "lo": 1000,
+        "hi": 8000,
+        "seed": 19
+      },
+      "q_lens": 1,
+      "packed": false,
+      "heads_q": 32,
+      "page_size": 64,
+      "mask": "dense"
+    },
+    {
+      "id": "mla-cp8-q1-causal",
+      "family": "mla",
+      "covers": "context parallel 8x64, SQ1 causal",
+      "dtype": "bf16",
+      "batch": 64,
+      "kv_lens": {
+        "lo": 16000,
+        "hi": 64000,
+        "seed": 20
+      },
+      "q_lens": 1,
+      "packed": false,
+      "heads_q": 128,
+      "page_size": 64,
+      "mask": "causal",
+      "cp": [
+        8,
+        64,
+        3
+      ]
+    },
+    {
+      "id": "mla-cp8-q4-causal",
+      "family": "mla",
+      "covers": "context parallel 8x64, causal MTP: rank-local cached prefix",
+      "dtype": "bf16",
+      "batch": 32,
+      "kv_lens": {
+        "lo": 16000,
+        "hi": 48000,
+        "seed": 21
+      },
+      "q_lens": 4,
+      "packed": false,
+      "heads_q": 128,
+      "page_size": 64,
+      "mask": "causal",
+      "cp": [
+        8,
+        64,
+        3
+      ]
+    },
+    {
+      "id": "mla-cp4-i1-q1-causal",
+      "family": "mla",
+      "covers": "context parallel 4x1 (token interleave), SQ1 causal",
+      "dtype": "bf16",
+      "batch": 64,
+      "kv_lens": {
+        "lo": 8000,
+        "hi": 32000,
+        "seed": 22
+      },
+      "q_lens": 1,
+      "packed": false,
+      "heads_q": 128,
+      "page_size": 64,
+      "mask": "causal",
+      "cp": [
+        4,
+        1,
+        1
+      ]
+    },
+    {
+      "id": "mla-cp8-varq-causal",
+      "family": "mla",
+      "covers": "context parallel 8x64, packed-Q causal",
+      "dtype": "bf16",
+      "batch": 32,
+      "kv_lens": {
+        "lo": 16000,
+        "hi": 48000,
+        "seed": 23
+      },
+      "q_lens": [
+        1,
+        4,
+        3,
+        2,
+        1,
+        4,
+        3,
+        2,
+        1,
+        4,
+        3,
+        2,
+        1,
+        4,
+        3,
+        2,
+        1,
+        4,
+        3,
+        2,
+        1,
+        4,
+        3,
+        2,
+        1,
+        4,
+        3,
+        2,
+        1,
+        4,
+        3,
+        2
+      ],
+      "packed": true,
+      "heads_q": 128,
+      "page_size": 64,
+      "mask": "causal",
+      "cp": [
+        8,
+        64,
+        3
+      ]
+    },
+    {
+      "id": "mla-h16-cp8-q4-causal",
+      "family": "mla",
+      "covers": "few heads (1CTA path), context parallel causal MTP",
+      "dtype": "bf16",
+      "batch": 64,
+      "kv_lens": {
+        "lo": 16000,
+        "hi": 48000,
+        "seed": 24
+      },
+      "q_lens": 4,
+      "packed": false,
+      "heads_q": 16,
+      "page_size": 64,
+      "mask": "causal",
+      "cp": [
+        8,
+        64,
+        3
+      ]
+    }
+  ]
+}

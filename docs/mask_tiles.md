@@ -150,16 +150,21 @@ The oracle check still applies in that case.
 
 ## Recorded result
 
-FlashInfer #9846 at `45aab18aa9`, against main `253986e2dc`. NVIDIA B300 SXM6
+FlashInfer #9846 at `ba0560642`, against main `253986e2dc`. NVIDIA B300 SXM6
 AC, CUDA 13.0, five interleaved rounds:
 
 - **Verdict:** PASS. All 33 cases pass the oracle, and every output is bitwise
   identical to main.
 - **Speedups:**
-  - variable window 2048: −15.4%;
-  - packed sliding window: −22.1%;
-  - context-parallel packed-Q MLA: −2.7%;
-  - context-parallel MLA MTP: −1.0%.
-- **Paged shifted causal at D256:** +0.0% to +0.2%.
-- **Worst case:** +0.8% (MLA H16 packed-Q causal).
-- **Geomean:** −1.39%.
+  - fixed sliding windows 1024 and 4000: −20.1% and −23.7%;
+  - variable window 2048: −15.6%;
+  - packed sliding window: −22.2%;
+  - context-parallel packed-Q MLA: −2.1%;
+  - context-parallel MLA MTP: −1.2%.
+- **Paged shifted causal at D256:** −0.2% to +0.0%.
+- **Worst case:** +0.9% (MLA H16 packed-Q causal).
+- **Geomean:** −2.98%.
+
+The suite also caught a regression during review: an intermediate commit that
+rebuilt the D256 TAIL causal mask measured +1.6% to +1.9% on the D256 cases,
+and was replaced before the recorded run.

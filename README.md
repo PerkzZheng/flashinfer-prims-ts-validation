@@ -69,8 +69,9 @@ export RESULTS_ROOT=/path/to/results
 
 ## Accuracy gate
 
-Run the four numerical PrimTS test files once in the CUDA 12.9 environment and
-again in the CUDA 13.0 environment:
+Run the numerical PrimTS tests for FMHA context, FMHA decode, mask handling and
+MLA decode once in the CUDA 12.9 environment and again in the CUDA 13.0
+environment:
 
 ```bash
 python "$VALIDATION_ROOT/scripts/run_accuracy.py" \
@@ -83,8 +84,18 @@ python "$VALIDATION_ROOT/scripts/run_accuracy.py" \
 ```
 
 The runner verifies that FlashInfer imports from the selected checkout and
-that CUTLASS DSL 4.7.0 is installed. It writes `accuracy.log`, `accuracy.xml`,
-and a path-redacted `manifest.json` while preserving pytest's exit status.
+that CUTLASS DSL 4.7.0, the recorded qualification release, is installed.
+FlashInfer requires 4.8.0 or newer since #7134; for those checkouts, name the
+installed release with `--cutlass-dsl-version`, e.g. 4.8.1, which the manifest
+records. The runner writes `accuracy.log`, `accuracy.xml`, and a path-redacted
+`manifest.json` while preserving pytest's exit status.
+
+The runner picks the test files from the selected checkout's layout, so tests
+that FlashInfer moves between files stay in the gate. Since #6529 the mask
+tests live in `test_attention_ts_features.py`, from which only those two test
+functions are selected. Since #9897 the mixed-precision decode grid lives in
+`test_attention_ts_decode_mixed_precision.py`, which is added when present.
+`--list` prints the resolved targets.
 
 At the recorded release snapshot, each environment collected 360 tests:
 
@@ -96,7 +107,9 @@ At the recorded release snapshot, each environment collected 360 tests:
 | MLA decode | 92 |
 | Total per environment | 360 |
 
-Counts can grow with FlashInfer. The release gate requires at least 360 tests,
+Counts can grow with FlashInfer: at main `a7ed35743` the resolved targets
+collect 1,937 tests (401 context, 632 decode, 696 mixed-precision decode, 9
+mask, 199 MLA decode). The release gate requires at least 360 tests,
 zero failures/errors, and zero skips. Structural trace-template checks are
 separate from numerical accuracy and can be added with `--include-trace`.
 `--allow-partial` exists only for diagnostic selections and is not signoff.

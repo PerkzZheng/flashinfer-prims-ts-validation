@@ -175,14 +175,21 @@ Run the existing source tests without copying them into this repository:
 
 ```bash
 cd "$FLASHINFER_ROOT"
-python -m pytest tests/attention/test_attention_ts_decode.py -q --tb=short \
+tests=(tests/attention/test_attention_ts_decode.py)
+# FlashInfer #9897 moved the mixed-precision grid into its own file.
+mixed=tests/attention/test_attention_ts_decode_mixed_precision.py
+if [ -f "$mixed" ]; then tests+=("$mixed"); fi
+python -m pytest "${tests[@]}" -q --tb=short \
   --junitxml="$RESULTS_ROOT/decode.xml" \
   -k '(mixed_precision and nvfp4 and d256) or large_tile_size_q or nvfp4_resource_overrides or final_statistics or nvfp4_padded_scale_page_stride or mixed_precision_more_loaders_than_pages or large_grouped_nvfp4_grid or split_workspace_is_plan_invariant or plans_share_one_zeroed_workspace or replanned_sizes or packed_fp8_q_mask_product or fp8_speculative_runtime_reduction or static_fp8_d128_odd_kv_tail_is_finite or wide_fp8_gqa_accuracy'
 ```
 
 At `e559d416b`, all 225 selected cases passed on B200. Counts can change with
-the selected source version. This is a focused selection, not a full repository
-or Rubin/GB300 requalification.
+the selected source version. Since FlashInfer #9897 the
+`mixed_precision and nvfp4 and d256` cases live in
+`test_attention_ts_decode_mixed_precision.py`; a command naming only
+`test_attention_ts_decode.py` silently drops them. This is a focused selection,
+not a full repository or Rubin/GB300 requalification.
 
 ## Recorded session evidence
 

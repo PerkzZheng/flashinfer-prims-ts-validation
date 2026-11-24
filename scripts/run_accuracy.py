@@ -28,15 +28,39 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
-ACCURACY_TESTS = (
-    "tests/attention/test_attention_ts_context.py",
-    "tests/attention/test_attention_ts_decode.py",
-    "tests/attention/test_attention_ts_mask.py",
-    "tests/attention/test_attention_ts_mla_decode.py",
+CONTEXT_TEST = "tests/attention/test_attention_ts_context.py"
+DECODE_TEST = "tests/attention/test_attention_ts_decode.py"
+MLA_DECODE_TEST = "tests/attention/test_attention_ts_mla_decode.py"
+# FlashInfer moved two groups of these tests between files: the mask
+# predicates into test_attention_ts_features.py (#6529), next to unrelated
+# feature tests, and the mixed-precision decode grid out of
+# test_attention_ts_decode.py (#9897). Targets are resolved per checkout so
+# that both sides of each move run the same tests.
+MASK_TEST = "tests/attention/test_attention_ts_mask.py"
+MASK_TEST_NODES = tuple(
+    f"tests/attention/test_attention_ts_features.py::{name}"
+    for name in ("test_kv_tile_is_fully_visible", "test_kv_tile_needs_right_mask")
+)
+DECODE_MIXED_PRECISION_TEST = (
+    "tests/attention/test_attention_ts_decode_mixed_precision.py"
 )
 TRACE_TEST = "tests/trace/test_fi_trace_template_consistency.py"
+# The recorded qualification; FlashInfer requires 4.8.0 or newer since #7134.
 EXPECTED_CUTLASS_DSL_VERSION = "4.7.0"
 MINIMUM_ACCURACY_TEST_COUNT = 360
+
+
+def _accuracy_tests(source_root: Path) -> list[str]:
+    """Return the numerical pytest targets in this checkout's file layout."""
+    tests = [CONTEXT_TEST, DECODE_TEST]
+    if (source_root / DECODE_MIXED_PRECISION_TEST).is_file():
+        tests.append(DECODE_MIXED_PRECISION_TEST)
+    if (source_root / MASK_TEST).is_file():
+        tests.append(MASK_TEST)
+    else:
+        tests.extend(MASK_TEST_NODES)
+    tests.append(MLA_DECODE_TEST)
+    return tests
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -73,6 +97,15 @@ def _parser() -> argparse.ArgumentParser:
         "--allow-partial",
         action="store_true",
         help="diagnostic only: allow fewer than 360 executed tests or skips",
+    )
+    parser.add_argument(
+        "--cutlass-dsl-version",
+        default=EXPECTED_CUTLASS_DSL_VERSION,
+        help=(
+            "required nvidia-cutlass-dsl release (default: %(default)s, the "
+            "recorded qualification); checkouts since FlashInfer #7134 need "
+            "4.8.0 or newer"
+        ),
     )
     parser.add_argument("--list", action="store_true", help="print tests and exit")
     return parser
@@ -167,22 +200,24 @@ def _accuracy_gate_returncode(
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     source_root = args.source_root.resolve()
-    tests = list(ACCURACY_TESTS)
+    if not (source_root / ".git").exists():
+        raise SystemExit(f"not a FlashInfer Git checkout: {source_root}")
+    tests = _accuracy_tests(source_root)
     if args.include_trace:
         tests.append(TRACE_TEST)
     if args.list:
         print("\n".join(tests))
         return 0
-    if not (source_root / ".git").exists():
-        raise SystemExit(f"not a FlashInfer Git checkout: {source_root}")
-    missing = [test for test in tests if not (source_root / test).is_file()]
+    missing = [
+        test for test in tests if not (source_root / test.partition("::")[0]).is_file()
+    ]
     if missing:
         raise SystemExit(f"missing test files: {missing}")
 
     wheel_version = importlib.metadata.version("nvidia-cutlass-dsl")
-    if wheel_version.partition("+")[0] != EXPECTED_CUTLASS_DSL_VERSION:
+    if wheel_version.partition("+")[0] != args.cutlass_dsl_version:
         raise SystemExit(
-            f"expected nvidia-cutlass-dsl {EXPECTED_CUTLASS_DSL_VERSION}, "
+            f"expected nvidia-cutlass-dsl {args.cutlass_dsl_version}, "
             f"got {wheel_version}"
         )
 
@@ -246,6 +281,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "includes_structural_trace_test": args.include_trace,
         "controls": {
             "physical_device_exposed_as_cuda_zero": args.device,
+            "required_nvidia_cutlass_dsl": args.cutlass_dsl_version,
             "minimum_executed_test_count": MINIMUM_ACCURACY_TEST_COUNT,
             "zero_skips_required": True,
             "allow_partial_diagnostic": args.allow_partial,

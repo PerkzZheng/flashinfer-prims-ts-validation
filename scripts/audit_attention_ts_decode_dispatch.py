@@ -48,14 +48,19 @@ def main(argv=None):
         raise ValueError("Choose a new output filename")
     _, _, _, metadata = load_runtime(args.source_root, args.output.resolve().parent)
     from cutlass import BFloat16, Float4E2M1FN, Float8E4M3FN, Float16
-    try:  # one folder per feature (prims_ts/decode/kernel/selection.py)
-        from flashinfer.attention.prims_ts.decode.kernel.selection import (
+    try:  # feature packages under prims_ts/variants/
+        from flashinfer.attention.prims_ts.variants.decode.kernel.selection import (
             make_decode_config,
         )
-    except ImportError:  # kernels/ layout
-        from flashinfer.attention.prims_ts.kernels.fmha_decode.fmha_decode_config import (
-            make_decode_config,
-        )
+    except ImportError:
+        try:  # one folder per feature (prims_ts/decode/kernel/selection.py)
+            from flashinfer.attention.prims_ts.decode.kernel.selection import (
+                make_decode_config,
+            )
+        except ImportError:  # kernels/ layout
+            from flashinfer.attention.prims_ts.kernels.fmha_decode.fmha_decode_config import (
+                make_decode_config,
+            )
 
     metadata["audit_sha256"] = sha256_file(__file__)
     rows = []

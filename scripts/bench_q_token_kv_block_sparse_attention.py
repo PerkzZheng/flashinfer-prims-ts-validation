@@ -31,20 +31,29 @@ from flashinfer.attention.prims_ts import (
     suggest_q_token_kv_block_sparse_group_size,
     validate_q_token_kv_block_sparse_group_size,
 )
-try:  # one folder per feature (prims_ts/decode/, prims_ts/q_token_.../)
-    from flashinfer.attention.prims_ts.decode.launch import (
+try:  # feature packages under prims_ts/variants/
+    from flashinfer.attention.prims_ts.variants.decode.launch import (
         resolve_decode_launch_spec as _resolve_decode_launch_spec,
     )
-    from flashinfer.attention.prims_ts.q_token_kv_block_sparse_metadata.metadata import (
+    from flashinfer.attention.prims_ts.variants.q_token_kv_block_sparse_metadata.metadata import (
         build_metadata as _build_q_token_kv_block_sparse_metadata,
         get_metadata_output_shapes as _get_q_token_kv_block_sparse_metadata_output_shapes,
     )
-except ImportError:  # single-module layout
-    from flashinfer.attention.prims_ts.decode import _resolve_decode_launch_spec
-    from flashinfer.attention.prims_ts.q_token_kv_block_sparse_metadata import (
-        _build_q_token_kv_block_sparse_metadata,
-        _get_q_token_kv_block_sparse_metadata_output_shapes,
-    )
+except ImportError:
+    try:  # one folder per feature (prims_ts/decode/, prims_ts/q_token_.../)
+        from flashinfer.attention.prims_ts.decode.launch import (
+            resolve_decode_launch_spec as _resolve_decode_launch_spec,
+        )
+        from flashinfer.attention.prims_ts.q_token_kv_block_sparse_metadata.metadata import (
+            build_metadata as _build_q_token_kv_block_sparse_metadata,
+            get_metadata_output_shapes as _get_q_token_kv_block_sparse_metadata_output_shapes,
+        )
+    except ImportError:  # single-module layout
+        from flashinfer.attention.prims_ts.decode import _resolve_decode_launch_spec
+        from flashinfer.attention.prims_ts.q_token_kv_block_sparse_metadata import (
+            _build_q_token_kv_block_sparse_metadata,
+            _get_q_token_kv_block_sparse_metadata_output_shapes,
+        )
 from sparse_attention_suites import SuiteCase, _expand_manifest, _select_cases
 from vllm.models.qwen4_exp.nvidia.ops.qsa import (
     _select_config,

@@ -55,9 +55,8 @@ Use a clean FlashInfer Git checkout containing the Prims-TS decode API and
 `cfa0318a1316e8838bdee32c2a2014e22001dabe`.
 
 This session used CUDA 13.4, PyTorch 2.14 development builds, and CUTLASS DSL
-4.8.1 on Rubin, GB300 and B200. This suite's dependency version differs from
-the historical 4.7.0 default in the repository's root requirements. In the
-matching CUDA/PyTorch environment, install:
+4.8.1 on Rubin, GB300 and B200, the default in the repository's root
+requirements. In the matching CUDA/PyTorch environment, install:
 
 ```bash
 python -m pip install 'nvidia-cutlass-dsl[cu13]==4.8.1' cupti-python pytest

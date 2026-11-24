@@ -891,18 +891,21 @@ def _source_provenance(repo: Path) -> dict[str, object]:
         "flashinfer/attention/prims_ts/kernels/fmha_context/fmha_tasks.py",
         "flashinfer/attention/prims_ts/kernels/fmha_context/helpers_paged.py",
     )
-    if (repo / "flashinfer/attention/prims_ts/context/__init__.py").exists():
-        # One folder per feature: the same code under prims_ts/context/.
-        relative_paths = (
-            "flashinfer/attention/prims_ts/__init__.py",
-            "flashinfer/attention/prims_ts/context/__init__.py",
-            "flashinfer/attention/prims_ts/context/compile.py",
-            "flashinfer/attention/prims_ts/context/geometry.py",
-            "flashinfer/attention/prims_ts/context/validation.py",
-            "flashinfer/attention/prims_ts/context/kernel/kernel.py",
-            "flashinfer/attention/prims_ts/context/kernel/tasks.py",
-            "flashinfer/attention/prims_ts/context/kernel/helpers_paged.py",
-        )
+    for context_dir in ("variants/context", "context"):
+        # One folder per feature: the same code under prims_ts/[variants/]context/.
+        prefix = f"flashinfer/attention/prims_ts/{context_dir}"
+        if (repo / prefix / "__init__.py").exists():
+            relative_paths = (
+                "flashinfer/attention/prims_ts/__init__.py",
+                f"{prefix}/__init__.py",
+                f"{prefix}/compile.py",
+                f"{prefix}/geometry.py",
+                f"{prefix}/validation.py",
+                f"{prefix}/kernel/kernel.py",
+                f"{prefix}/kernel/tasks.py",
+                f"{prefix}/kernel/helpers_paged.py",
+            )
+            break
     return {
         "benchmark_sha256": _sha256_file(Path(__file__)),
         "timing_helper_sha256": _sha256_file(

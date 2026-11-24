@@ -153,7 +153,7 @@ _TRTLLM_SPARSE_MLA_TOP_K = 0
 _TRTLLM_PYTHON_AUTOTUNE = False
 _TRTLLM_INTERNAL_SHAPE_AUTO_SELECTOR = True
 _PRIMS_TS_INTERFACES = ("wrapper", "standalone")
-_EXPECTED_CUTLASS_DSL_VERSION = "4.7.0"
+_EXPECTED_CUTLASS_DSL_VERSION = "4.8.1"
 _ORACLE_CUDA_MATMUL_FP32_PRECISION = "ieee"
 _REFERENCE_TOLERANCES = {
     "bf16": (1e-2, 5e-4, 2e-2),
@@ -2468,14 +2468,19 @@ def _load_runtime() -> dict[str, Any]:
             make_attention_ts_mla_decode_case,
         )
         from flashinfer.attention.prims_ts import BatchMLADecodePagedTSWrapper
-        try:  # one folder per feature (prims_ts/mla_decode/launch.py)
-            from flashinfer.attention.prims_ts.mla_decode.launch import (
+        try:  # feature packages under prims_ts/variants/
+            from flashinfer.attention.prims_ts.variants.mla_decode.launch import (
                 get_compiled_mla_decode as _get_compiled_mla_decode,
             )
-        except ImportError:  # single-module layout
-            from flashinfer.attention.prims_ts.mla_decode import (
-                _get_compiled_mla_decode,
-            )
+        except ImportError:
+            try:  # one folder per feature (prims_ts/mla_decode/launch.py)
+                from flashinfer.attention.prims_ts.mla_decode.launch import (
+                    get_compiled_mla_decode as _get_compiled_mla_decode,
+                )
+            except ImportError:  # single-module layout
+                from flashinfer.attention.prims_ts.mla_decode import (
+                    _get_compiled_mla_decode,
+                )
         from flashinfer.mla import (
             get_prims_ts_batch_decode_mla_workspace_size,
             prims_ts_batch_decode_with_kv_cache_mla,

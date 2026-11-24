@@ -50,7 +50,7 @@ List or validate selections without touching CUDA::
         --repo-root /path/to/flashinfer --dry-run \
         --head-dim 256 --batch-size 4 --seq-len-q 256 --seq-len-kv 4096
 
-Run a resumable report after installing CUTLASS DSL 4.7.0::
+Run a resumable report after installing CUTLASS DSL 4.8.1::
 
     python scripts/bench_attention_ts_context_vs_trtllm_gen.py \
         --repo-root /path/to/flashinfer \
@@ -95,7 +95,7 @@ PRIMARY_GATE_METRIC = "performance.ts_gap_percent_order_balanced_total_duration"
 PRIMARY_GATE_FORMULA = "(sum(ts_sample_ms) / sum(trtllm_gen_sample_ms) - 1) * 100"
 
 EXPECTED_WHEEL_VERSION = os.environ.get(
-    "FLASHINFER_EXPECTED_CUTLASS_DSL_VERSION", "4.7.0"
+    "FLASHINFER_EXPECTED_CUTLASS_DSL_VERSION", "4.8.1"
 )
 EXPECTED_WHEEL_SHA256 = os.environ.get("FLASHINFER_EXPECTED_CUTLASS_DSL_WHEEL_SHA256")
 EXPECTED_WHEEL_PIP_REPORT = os.environ.get("FLASHINFER_CUTLASS_DSL_PIP_REPORT")

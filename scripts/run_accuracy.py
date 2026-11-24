@@ -46,7 +46,7 @@ DECODE_MIXED_PRECISION_TEST = (
 )
 TRACE_TEST = "tests/trace/test_fi_trace_template_consistency.py"
 # The recorded qualification; FlashInfer requires 4.8.0 or newer since #7134.
-EXPECTED_CUTLASS_DSL_VERSION = "4.7.0"
+EXPECTED_CUTLASS_DSL_VERSION = "4.8.1"
 MINIMUM_ACCURACY_TEST_COUNT = 360
 
 
@@ -102,9 +102,9 @@ def _parser() -> argparse.ArgumentParser:
         "--cutlass-dsl-version",
         default=EXPECTED_CUTLASS_DSL_VERSION,
         help=(
-            "required nvidia-cutlass-dsl release (default: %(default)s, the "
-            "recorded qualification); checkouts since FlashInfer #7134 need "
-            "4.8.0 or newer"
+            "required nvidia-cutlass-dsl release (default: %(default)s; "
+            "FlashInfer needs 4.8.0 or newer since #7134, and the recorded "
+            "B200 qualification used 4.7.0 on older checkouts)"
         ),
     )
     parser.add_argument("--list", action="store_true", help="print tests and exit")

@@ -35,7 +35,8 @@ policy exceptions. Numerical accuracy is checked before and after timing.
 
 - Full performance gate: NVIDIA B200 (SM100) with CUDA 13.0.
 - Accuracy gate: CUDA 12.9 and CUDA 13.0, run independently.
-- Compiler package: public `nvidia-cutlass-dsl==4.7.0`.
+- Compiler package: public `nvidia-cutlass-dsl==4.8.1` (FlashInfer needs 4.8.0
+  or newer since #7134; the recorded B200 checkpoint used 4.7.0).
 - Source: a FlashInfer Git checkout containing `flashinfer.attention.prims_ts`.
 - Reference backends: TRTLLM-Gen artifacts supplied through the matching
   FlashInfer/`flashinfer-cubin` installation, plus monolithic CuTe DSL for the
@@ -54,7 +55,7 @@ Create the CUDA/PyTorch environment appropriate for the target FlashInfer
 checkout, then install the public CUTLASS DSL release and test dependency:
 
 ```bash
-python -m pip install nvidia-cutlass-dsl==4.7.0 pytest
+python -m pip install nvidia-cutlass-dsl==4.8.1 pytest
 ```
 
 Build or install FlashInfer by following the
@@ -84,9 +85,9 @@ python "$VALIDATION_ROOT/scripts/run_accuracy.py" \
 ```
 
 The runner verifies that FlashInfer imports from the selected checkout and
-that CUTLASS DSL 4.7.0, the recorded qualification release, is installed.
-FlashInfer requires 4.8.0 or newer since #7134; for those checkouts, name the
-installed release with `--cutlass-dsl-version`, e.g. 4.8.1, which the manifest
+that CUTLASS DSL 4.8.1 is installed. FlashInfer requires 4.8.0 or newer since
+#7134. The recorded B200 qualification used 4.7.0 on older checkouts; name a
+different installed release with `--cutlass-dsl-version`, which the manifest
 records. The runner writes `accuracy.log`, `accuracy.xml`, and a path-redacted
 `manifest.json` while preserving pytest's exit status.
 

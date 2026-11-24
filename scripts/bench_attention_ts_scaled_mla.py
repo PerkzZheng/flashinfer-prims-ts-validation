@@ -4,6 +4,7 @@
 """Compare NVFP4 and plain-FP8 Prims-TS MLA with FlashMLA, using cold-L2 graphs."""
 
 import argparse
+import inspect
 import hashlib
 import itertools
 import json
@@ -128,14 +129,17 @@ def make_prims(f, *, packed):
         None if extra_ids is None else torch.full_like(lengths, extra_ids.shape[-1])
     )
     wrapper = BatchSparseMLADecodePagedTSWrapper()
+    # FlashInfer renamed num_heads, max_seq_len_q and q_data_type.
+    params = inspect.signature(wrapper.plan).parameters
+    renamed = "num_qo_heads" in params
     wrapper.plan(
         device=f.q.device,
         batch_size=b,
-        num_heads=h,
-        max_seq_len_q=sq,
+        **{("num_qo_heads" if renamed else "num_heads"): h},
+        **{("max_q_len" if "max_q_len" in params else "max_seq_len_q"): sq},
         max_topk=ids.shape[-1],
         max_extra_topk=0 if extra_ids is None else extra_ids.shape[-1],
-        q_data_type=f.q.dtype,
+        **{("q_dtype" if "q_dtype" in params else "q_data_type"): f.q.dtype},
         qk_rope_head_dim=f.dim - 512,
         kv_cache_format=fmt,
         extra_kv_cache_format=extra_fmt,

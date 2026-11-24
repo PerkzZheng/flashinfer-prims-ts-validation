@@ -173,17 +173,28 @@ def make_backend(name, f, helpers, *, no_swa=False):
     out = torch.empty_like(q, dtype=torch.bfloat16)
     if name == "ts-auto":
         w = BatchSparseMLADecodePagedTSWrapper()
+        # FlashInfer renamed max_seq_len_q, q_data_type, has_sinks and sinks.
+        plan_params = inspect.signature(w.plan).parameters
+        run_params = inspect.signature(w.run).parameters
+        new_names = "max_q_len" in plan_params
         w.plan(
             q.device,
             batch,
             heads,
-            max_seq_len_q=queries,
-            q_data_type=q.dtype,
+            **{("max_q_len" if new_names else "max_seq_len_q"): queries},
+            **{("q_dtype" if "q_dtype" in plan_params else "q_data_type"): q.dtype},
             max_topk=f.ci.shape[-1] if no_swa else 128,
             max_extra_topk=0 if no_swa else f.ci.shape[-1],
-            has_sinks=True,
+            **{
+                (
+                    "use_attention_sinks"
+                    if "use_attention_sinks" in plan_params
+                    else "has_sinks"
+                ): True
+            },
             assume_valid_prefix=True,
         )
+        run_sink_kwarg = "attention_sinks" if "attention_sinks" in run_params else "sinks"
         primary, extra = (f.compressed, None) if no_swa else (f.swa, f.compressed)
         metadata = helpers.prepare_sparse_mla_indices(
             w,
@@ -204,8 +215,8 @@ def make_backend(name, f, helpers, *, no_swa=False):
                 extra_kv_cache=extra,
                 out=out,
                 validate=False,
-                sinks=f.sinks,
                 softmax_scale=f.softmax_scale,
+                **{run_sink_kwarg: f.sinks},
             )
     else:
         assert name == "trtllm-gen"

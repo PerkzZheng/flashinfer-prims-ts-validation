@@ -42,7 +42,7 @@ Each request gets 512 selected blocks of four tokens per query token plus the ex
 
 ## Setup and execution
 
-The suites need a FlashInfer checkout with NVFP4-KV support in QSA. The recorded validation used branch `qsa-nvfp4-kv-qtoken` of [PerkzZheng/flashinfer](https://github.com/PerkzZheng/flashinfer/tree/qsa-nvfp4-kv-qtoken) at commit `39b53eb0d9` for the FP8-KV comparison and `98cd63fac` for the BF16-KV comparison (see the validation section below); the harness records the actual revision, branch, dirty state and a hash of the Prims-TS sources for every run. It does not install packages or allocate hardware.
+The suites need a FlashInfer checkout with NVFP4-KV support in QSA, which upstream main has since [#9375](https://github.com/flashinfer-ai/flashinfer/pull/9375). The recorded validation predates that merge: it used commit `39b53eb0d9` for the FP8-KV comparison and `98cd63fac` for the BF16-KV comparison (see the validation section below), earlier revisions of that PR's branch `qsa-nvfp4-kv-qtoken` of PerkzZheng/flashinfer. The branch has since been rebased, so fetch them by full hash: `git fetch https://github.com/PerkzZheng/flashinfer.git 39b53eb0d9aeea1cb6d89157a70b21e40aee8f35 98cd63facf29a30dc1a00f51ef66b94963616358`. A `--quick` run of `decode-tp1-b32-mtp4` in both comparisons also passed against main `a7ed35743` on GB300; that is functional evidence only. The harness records the actual revision, branch, dirty state and a hash of the Prims-TS sources for every run. It does not install packages or allocate hardware.
 
 ```bash
 export FLASHINFER_ROOT=/path/to/flashinfer

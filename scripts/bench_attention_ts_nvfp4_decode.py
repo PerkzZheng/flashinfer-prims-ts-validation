@@ -201,7 +201,8 @@ def make_call(torch, flashinfer, f, c, spec, backend):
             mask_type=mask,
             **({"seq_lens_kv": f.lens.cpu()} if spec["planned_lengths"] else {}),
         )
-        state = wrapper._plan_state
+        # The branch dropped the leading underscore from internal names.
+        state = getattr(wrapper, "plan_state", None) or wrapper._plan_state
         cfg = state.config
         policy = {k: getattr(cfg, k) for k in POLICY_FIELDS}
         policy["requested_splits"] = int(state.requested_splits or cfg.splits_kv)
